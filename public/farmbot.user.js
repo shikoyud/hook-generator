@@ -1320,13 +1320,14 @@
     running = true;
     loopId++;
     log(`Bot started (farmers ${G.Ca.farmers}, check mode ${G.Ca.status.mode}).`, 'good');
+    Panel.refresh(true);
     loop(loopId);
   }
   function stop() {
     running = false;
     Farm.status = 'stopped';
     log('Bot stopped.');
-    Panel.refresh();
+    Panel.refresh(true);
   }
 
   // ------------------------------------------------------------------- PANEL
@@ -1387,7 +1388,18 @@
         };
       });
       this.drag(el, el.querySelector('.fb-head'));
+      el.addEventListener('pointerdown', () => (this.pressing = true));
+      document.addEventListener('pointerup', () => {
+        if (!this.pressing) return;
+        this.pressing = false;
+        setTimeout(() => this.refresh(), 0); // after the click handler ran
+      });
       logListeners.add(() => this.tab === 'log' && this.render());
+      // keep the panel live even when the bot is stopped (farm loads, energy changes, battle phases)
+      setInterval(() => this.refresh(), 2000);
+      if (G && G.q && typeof G.q.subscribe === 'function') {
+        try { G.q.subscribe(() => this.refresh()); } catch {}
+      }
       this.render();
       return el;
     },
@@ -1414,11 +1426,18 @@
         document.addEventListener('mouseup', up);
       };
     },
+    pressing: false,
+    typing() {
+      const a = document.activeElement;
+      return !!a && this.el.contains(a) && (a.tagName === 'INPUT' && a.type !== 'checkbox' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA');
+    },
+    // Re-render the current tab. Skipped only while a mouse button is held inside the panel
+    // (a rebuild between mousedown and click would eat the click) or a field is being edited.
     refresh(force = false) {
-      if (!this.el || this.tab !== 'bot') return;
-      // Rebuilding the DOM while the person is on it eats clicks on the checkboxes.
-      if (!force && (this.el.matches(':hover') || this.el.contains(document.activeElement))) return;
-      this.render();
+      if (!this.el) return;
+      if (!force && (this.pressing || this.typing())) return;
+      if (this.tab === 'bot') this.renderBot();
+      else if (this.tab === 'plan') this.renderPlan();
     },
     body() {
       return this.el.querySelector('.fb-body');
@@ -1429,7 +1448,7 @@
       if (this.tab === 'bot') this.renderBot();
       else if (this.tab === 'plan') {
         this.renderPlan();
-        this.plannerTimer = setInterval(() => this.tab === 'plan' && !this.el.contains(document.activeElement) && this.renderPlan(), 5000);
+        this.plannerTimer = setInterval(() => this.tab === 'plan' && this.refresh(), 5000);
       } else this.renderLog();
     },
     esc: (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
@@ -1475,11 +1494,11 @@ ${row('Jobs sent / held', `${stats.jobs} (${stats.bulk} batches) / ${stats.refus
 ${row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good')}
 ${row('Battle runs', stats.battles)}
 <h4>Harvest cap today</h4>
-${proj ? row('Cap', n(proj.cap)) + row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Projected total', `${n(proj.total)} (${proj.total >= proj.cap ? 'cap reached: silo crops only' : n(proj.room) + ' room for cash crops'})`, proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap functions not in hook</p>'}
+${!farm ? '<p class="hint">waiting for your farm to load…</p>' : proj ? row('Cap', n(proj.cap)) + row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Projected total', `${n(proj.total)} (${proj.total >= proj.cap ? 'cap reached: silo crops only' : n(proj.room) + ' room for cash crops'})`, proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>'}
 <h4>Energy purchases</h4>
-${G.energyPrice && farm ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens per energy`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Policy', cfg.autoEnergy ? (Farm.lastEnergyPlan ? this.esc(Farm.lastEnergyPlan.buy ? `buy ${Farm.lastEnergyPlan.buy}: ${Farm.lastEnergyPlan.reason}` : Farm.lastEnergyPlan.reason) : 'waiting for first tick') : 'off', cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '') + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% of wallet · margin ${cfg.energyMargin}×`) : '<p class="hint">price function not in hook</p>'}
+${!farm ? '<p class="hint">waiting for your farm to load…</p>' : G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens per energy`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Policy', cfg.autoEnergy ? (Farm.lastEnergyPlan ? this.esc(Farm.lastEnergyPlan.buy ? `buy ${Farm.lastEnergyPlan.buy}: ${Farm.lastEnergyPlan.reason}` : Farm.lastEnergyPlan.reason) : 'waiting for first tick') : 'off', cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '') + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% of wallet · margin ${cfg.energyMargin}×`) : '<p class="hint">price function not in hook: regenerate the hook line</p>'}
 <h4>Village income</h4>
-${accrued == null ? '<p class="hint">passive function not in hook</p>' : row('Accrued', n(accrued)) + row('Collected by bot', `${stats.claims}× · ${n(stats.claimed)}`) + row('Next check', `every ${cfg.claimEvery} min, min ${cfg.claimMin}`)}
+${!farm ? '<p class="hint">waiting for your farm to load…</p>' : accrued == null ? '<p class="hint">passive function not in hook: regenerate the hook line</p>' : row('Accrued', n(accrued)) + row('Collected by bot', `${stats.claims}× · ${n(stats.claimed)}`) + row('Next check', `every ${cfg.claimEvery} min, min ${cfg.claimMin}`)}
 <p class="hint">Delays ${cfg.delayMin}–${cfg.delayMax}s (idle ${cfg.idleMin}–${cfg.idleMax}s, ${Math.round(cfg.idleChance * 100)}%). Edit via <code>__bot.cfg</code>, then <code>__bot.save()</code>.</p>`;
       b.querySelector('[data-a="start"]')?.addEventListener('click', start);
       b.querySelector('[data-a="stop"]')?.addEventListener('click', stop);
