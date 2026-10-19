@@ -58,7 +58,8 @@
     energyForCycles: true, // extra plant+harvest cycles under the harvest cap (margin applies)
     energyForBattle: false, // another arena run while the loot cap is open (margin applies to last run's loot)
     energyMargin: 1.5, // a plant+harvest cycle must return at least this × its energy cost
-    energyBuyBelow: 8, // consider buying once energy is under this
+    energyBuffer: 0, // extra energy to keep on hand beyond what the next jobs cost
+    energyTopUp: false, // when buying, also cover the day's worthwhile crop cycles (bigger, rarer buys)
     energyMinBuy: 10, // never buy fewer than this at once
     energyMaxBuy: 60, // never buy more than this at once
     energyMaxPerDay: 300, // hard stop per farm day
@@ -435,13 +436,20 @@
       const out = { buy: 0, reason: '', need: 0, cycles: 0, cycleEnergy: 0, pricePer: 0, room: 0 };
       if (!h.energyPrice || !h.cap) return { ...out, reason: 'price or cap not in hook' };
       const energy = farm.today.energy;
-      if (energy >= cfg.energyBuyBelow) return { ...out, reason: `energy ${energy} ≥ ${cfg.energyBuyBelow}` };
       const pricePer = h.energyPrice(farm, 10) / 10;
       out.pricePer = pricePer;
 
-      // 1. waiting work, split by reason
+      // 1. work the bot could do right now, split by reason. Only unpaid work counts: meals
+      //    for the *current* window (later meals are bought when they come due), harvests
+      //    waiting, and planting the empty fields.
       const win = Core.mealWindow(now, farm.tz);
-      const meals = cfg.energyForMeals === false ? 0 : Core.mealReserve(farm, now, h);
+      let meals = 0;
+      if (cfg.energyForMeals !== false) {
+        for (const st of farm.structures) {
+          const b = h.Fe[st.kind];
+          if (b && b.animal && st.fedWindow !== win && farm.animals.some((a) => a.kind === b.animal && !a.fedWindows.includes(win))) meals += 2;
+        }
+      }
       let need = 0;
       const readyFields = farm.fields.filter((f) => f.crop && Core.isBuilt(f, now) && h.or(f, now).state === 'ready').length;
       need += cfg.bulk && readyFields >= (cfg.bulkMin ?? 2) ? 2 : readyFields * 2;
@@ -458,12 +466,21 @@
         const b = h.Fe[s.kind];
         if (b && b.animal && readyKinds.has(b.animal)) need += 2;
       }
-      void win;
       if (cfg.energyForWaiting === false) need = 0;
       out.waiting = need;
       out.meals = meals;
-      need += meals;
+      // planting that is possible right now (empty, built fields with a crop to plant)
+      let planting = 0;
+      if (cfg.energyForCycles !== false) {
+        const empties = farm.fields.filter((f) => Core.isBuilt(f, now) && h.or(f, now).state === 'empty');
+        const choices = empties.length ? Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties }) : [];
+        planting = choices.length ? (cfg.bulk && choices.length >= (cfg.bulkMin ?? 2) ? 2 : choices.length * 2) : 0;
+      }
+      out.planting = planting;
+      need += meals + planting;
       out.need = need;
+      // Trigger only when the work in front of us cannot be paid for.
+      if (energy >= need + (cfg.energyBuffer || 0)) return { ...out, reason: `energy ${energy} covers ${need} now (${meals} meals, ${out.waiting} harvests, ${planting} planting)` };
 
       // 2. extra cycles today
       const proj = Core.incomeProjection(farm, now, h);
@@ -499,9 +516,11 @@
       out.cycles = cycles;
       out.cycleEnergy = Math.ceil(cycles * perCycle);
 
-      const target = need + out.cycleEnergy;
+      // Amount: the shortfall for the work now, topped up with the day's worthwhile cycles so we
+      // do not buy 10 at a time all day.
+      const target = need + (cfg.energyTopUp ? out.cycleEnergy : 0) + (cfg.energyBuffer || 0);
       let shortfall = target - energy;
-      if (shortfall <= 0) return { ...out, reason: `energy ${energy} covers ${out.meals} meals + ${out.waiting} waiting + ${cycles} cycles` };
+      if (shortfall <= 0) return { ...out, reason: `energy ${energy} covers the work now` };
 
       // amount: at least energyMinBuy, at most energyMaxBuy, within the daily cap and the wallet
       let buy = Math.min(cfg.energyMaxBuy, Math.max(cfg.energyMinBuy, Math.ceil(shortfall / 10) * 10));
@@ -511,7 +530,7 @@
       const budget = Math.floor(wallet * cfg.energyTokenFraction);
       while (buy > 0 && h.energyPrice(farm, buy) > budget) buy -= 10;
       if (buy < Math.min(cfg.energyMinBuy, 10)) return { ...out, reason: `wallet ${farm.tokens} too low (budget ${budget})` };
-      return { ...out, buy, reason: `${out.meals} for meals + ${out.waiting} for waiting work + ${out.cycleEnergy} for ${cycles} cycles − ${energy} on hand` };
+      return { ...out, buy, reason: `short for: ${out.meals} meals + ${out.waiting} harvests + ${out.planting} planting${cfg.energyTopUp ? ` + ${out.cycleEnergy} for ${cycles} cycles` : ''} − ${energy} on hand` };
     },
 
     // Energy for one more arena run. A run costs 5; buy only if the previous run's loot was worth
@@ -1523,6 +1542,7 @@ ${cb('energyForMeals', 'meals', 'Today\'s remaining animal meals.', !cfg.autoEne
 ${cb('energyForWaiting', 'waiting harvests', 'Ready crops, ripe fruit, products, full mine, today\'s oil.', !cfg.autoEnergy)}
 ${cb('energyForCycles', 'extra crop cycles', 'Cycles that fit under today\'s cap and earn at least the margin over their energy cost.', !cfg.autoEnergy)}
 ${cb('energyForBattle', 'battle runs', 'Between runs, 5 more while the loot cap is open and the last run paid off.', !cfg.autoEnergy)}</div>
+<div class="ctl">${cb('energyTopUp', 'buy ahead for the cycles of the day', 'Off: buy just the shortfall, rounded up to the minimum (10). On: when a purchase happens, also cover the crop cycles that still fit under the cap today, so buys are bigger and rarer.', !cfg.autoEnergy)}</div>
 ${row('Plan', this.esc(energyLine), cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '')}
 ${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens each`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% wallet · margin ${cfg.energyMargin}×`) : ''}`)}
 
