@@ -559,8 +559,13 @@
       const pick = Core.pickJob({ farm, now, queued: G.U.queued, plan: Planner.plan, last: Planner.last, cfg, h: helpers(), skip: this.skip });
 
       if (!pick) {
-        this.status = 'idle';
-        if (Battle.shouldStart(farm, now)) Battle.engage();
+        const why = Battle.blockReason(farm, now);
+        if (why === null) {
+          this.status = 'idle → arena';
+          Battle.engage();
+        } else {
+          this.status = `idle (no battle: ${why})`;
+        }
         return;
       }
 
@@ -610,11 +615,17 @@
     today() {
       return Core.mealWindow(G.W.now(), G.q.farm.tz).slice(0, 10);
     },
-    shouldStart(farm, now) {
-      if (!cfg.battle) return false;
-      if (this.capDay === this.today()) return false;
+    // Returns null when a run may start, otherwise the reason it may not.
+    blockReason(farm, now) {
+      if (!cfg.battle) return 'battle off';
+      if (this.capDay === this.today()) return 'loot cap reached today';
       const reserve = Core.mealReserve(farm, now, helpers());
-      return farm.today.energy >= reserve + 5;
+      if (farm.today.energy < reserve + 5) return `energy ${farm.today.energy} < meal reserve ${reserve} + 5`;
+      if (document.hidden) return 'tab hidden (game pauses battles)';
+      return null;
+    },
+    shouldStart(farm, now) {
+      return this.blockReason(farm, now) === null;
     },
     engage() {
       this.engaged = true;
@@ -938,7 +949,10 @@
       };
     },
     refresh() {
-      if (this.el && this.tab === 'bot') this.render();
+      if (!this.el || this.tab !== 'bot') return;
+      // Rebuilding the DOM while the person is on it eats clicks on the checkboxes.
+      if (this.el.matches(':hover') || this.el.contains(document.activeElement)) return;
+      this.render();
     },
     body() {
       return this.el.querySelector('.fb-body');
@@ -977,7 +991,7 @@
 <label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
 <label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label></div>
 ${row('Status', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
-${row('Battle', Battle.engaged ? this.esc(Battle.phase) : 'off')}
+${row('Battle', Battle.engaged ? this.esc(Battle.phase) : this.esc(farm ? (Battle.blockReason(farm, now) || 'ready when farm is idle') : 'off'))}
 ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}`)}
 ${row('Jobs / min', `${live.perMin} / ${live.allowed} (bot budget ${Math.floor(live.allowed * cfg.budgetFraction)})`, live.perMin > live.allowed * cfg.budgetFraction ? 'bad' : '')}
 ${row('Gap variation', `${ratio} (game flags &lt; 0.08, bot holds &lt; ${cfg.minCv}) · n=${live.n}`, isFinite(live.ratio) && live.ratio < cfg.minCv ? 'bad' : '')}
@@ -997,6 +1011,7 @@ ${accrued == null ? '<p class="hint">passive function not in hook</p>' : row('Ac
         i.onchange = () => {
           cfg[i.dataset.c] = i.checked;
           saveCfg();
+          log(`${i.dataset.c}: ${i.checked ? 'on' : 'off'}`);
           this.render();
         };
       });
