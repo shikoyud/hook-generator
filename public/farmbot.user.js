@@ -47,8 +47,7 @@
     claim: true,
     claimMin: 1, // tokens accrued before collecting
     claimEvery: 30, // minutes between collections
-    // battle
-    battle: true,
+    // battle (separate mode, started with the Battle button)
     maxWave: 30,
     keepAliveMin: 20,
     keepAliveMax: 45,
@@ -544,7 +543,7 @@
       const farm = G.q.farm;
       if (!farm) return (this.status = 'no farm open');
       if (G.Ca.blocked) return (this.status = 'paused: human check');
-      if (Battle.engaged) return (this.status = 'battle');
+      if (Battle.engaged) return (this.status = 'paused while battle mode runs');
       if (!this.farmReady()) {
         if (G.U.place === 'battle') goHome();
         return (this.status = `waiting for farm view (${G.U.place})`);
@@ -559,13 +558,7 @@
       const pick = Core.pickJob({ farm, now, queued: G.U.queued, plan: Planner.plan, last: Planner.last, cfg, h: helpers(), skip: this.skip });
 
       if (!pick) {
-        const why = Battle.blockReason(farm, now);
-        if (why === null) {
-          this.status = 'idle → arena';
-          Battle.engage();
-        } else {
-          this.status = `idle (no battle: ${why})`;
-        }
+        this.status = 'idle';
         return;
       }
 
@@ -615,23 +608,50 @@
     today() {
       return Core.mealWindow(G.W.now(), G.q.farm.tz).slice(0, 10);
     },
-    // Returns null when a run may start, otherwise the reason it may not.
-    blockReason(farm, now) {
-      if (!cfg.battle) return 'battle off';
+    stopRequested: false,
+    // Returns null when another run may start, otherwise the reason it may not.
+    blockReason(farm) {
+      if (this.stopRequested) return 'stop requested';
       if (this.capDay === this.today()) return 'loot cap reached today';
-      const reserve = Core.mealReserve(farm, now, helpers());
-      if (farm.today.energy < reserve + 5) return `energy ${farm.today.energy} < meal reserve ${reserve} + 5`;
+      if (farm.today.energy < 5) return `energy ${farm.today.energy} < 5`;
       if (document.hidden) return 'tab hidden (game pauses battles)';
       return null;
     },
-    shouldStart(farm, now) {
-      return this.blockReason(farm, now) === null;
+    shouldStart(farm) {
+      return this.blockReason(farm) === null;
+    },
+    // Battle button: go to the arena and play runs until energy, the loot cap or Stop ends it.
+    begin() {
+      if (this.engaged) return;
+      if (!G && !attach()) return log('Cannot start battle: hook not found.', 'bad');
+      const farm = G.q.farm;
+      if (!farm) return log('Cannot start battle: open a farm first.', 'bad');
+      this.stopRequested = false;
+      const why = this.blockReason(farm);
+      if (why) return log(`Battle not started: ${why}.`, 'bad');
+      this.engage();
+      Panel.refresh(true);
+    },
+    // Stop battle button: retreat from a running fight, then leave the arena.
+    end() {
+      if (!this.engaged) return;
+      this.stopRequested = true;
+      const s = this.scene();
+      const inRun = !!(s && s.run && s.run.active);
+      if (inRun && !this.retreating) {
+        this.retreating = true;
+        log('Stop requested: retreating from the current run.');
+        this.key('Escape', 'Escape');
+      } else if (!inRun) {
+        this.disengage('stopped');
+      }
+      Panel.refresh(true);
     },
     engage() {
       this.engaged = true;
       this.retreating = false;
       this.setPhase('go');
-      log('Farm idle: heading to the arena.');
+      log('Battle mode: heading to the arena.');
       clearInterval(this.timer);
       this.timer = setInterval(() => {
         try {
@@ -654,6 +674,7 @@
       if (this.phase !== p) {
         this.phase = p;
         this.since = Date.now();
+        Panel.refresh();
       }
     },
 
@@ -772,10 +793,10 @@
             this.hiddenWarned = true;
             log('Tab hidden: the game pauses battle runs while hidden.', 'bad');
           }
-          const wantOut = s.run.capHit || s.wave >= cfg.maxWave;
+          const wantOut = s.run.capHit || s.wave >= cfg.maxWave || this.stopRequested;
           if (wantOut && !this.retreating && s.mode === 'play') {
             this.retreating = true;
-            log(s.run.capHit ? 'Loot cap reached: retreating.' : `Wave ${s.wave} reached: retreating.`);
+            log(this.stopRequested ? 'Stop requested: retreating.' : s.run.capHit ? 'Loot cap reached: retreating.' : `Wave ${s.wave} reached: retreating.`);
             this.key('Escape', 'Escape');
           }
           return;
@@ -817,14 +838,15 @@
 
       if (this.phase === 'summary') {
         if (age < 1500) return;
-        if (this.shouldStart(farm, G.W.now()) && !G.Ca.blocked) {
+        const why = this.blockReason(farm);
+        if (!why && !G.Ca.blocked) {
           const again = $('#battle-ui [data-b="again"]');
           if (again) {
             again.click();
             return this.setPhase('starting');
           }
         }
-        return this.disengage('back to the farm');
+        return this.disengage(why || 'back to the farm');
       }
     },
   };
@@ -857,7 +879,6 @@
   }
   function stop() {
     running = false;
-    Battle.disengage();
     Farm.status = 'stopped';
     log('Bot stopped.');
     Panel.refresh();
@@ -878,7 +899,7 @@
 #fsbot .row span:last-child{font-weight:600;text-align:right}
 #fsbot .bad{color:#b3261e}#fsbot .good{color:#2f7d3a}
 #fsbot .btn{background:#2f7d3a;color:#fff;border:0;border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
-#fsbot .btn.stop{background:#b3261e}#fsbot .btn.sm{padding:3px 8px;background:#8a6d4a}
+#fsbot .btn.stop{background:#b3261e}#fsbot .btn.sm{padding:3px 8px;background:#8a6d4a}#fsbot .btn.battle{background:#7a3b8f}
 #fsbot .ctl{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center}
 #fsbot label.tg{display:flex;align-items:center;gap:4px}
 #fsbot h4{margin:8px 0 2px;font-size:12px;color:#5a4631}
@@ -948,10 +969,10 @@
         document.addEventListener('mouseup', up);
       };
     },
-    refresh() {
+    refresh(force = false) {
       if (!this.el || this.tab !== 'bot') return;
       // Rebuilding the DOM while the person is on it eats clicks on the checkboxes.
-      if (this.el.matches(':hover') || this.el.contains(document.activeElement)) return;
+      if (!force && (this.el.matches(':hover') || this.el.contains(document.activeElement))) return;
       this.render();
     },
     body() {
@@ -986,16 +1007,16 @@
       const proj = farm && G.cap ? Core.incomeProjection(farm, now, helpers()) : null;
       const accrued = farm && G.passive ? Math.floor(G.passive(farm, now)) : null;
       b.innerHTML = `
-<div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop</button>' : '<button class="btn" data-a="start">Start</button>'}
-<label class="tg"><input type="checkbox" data-c="battle" ${cfg.battle ? 'checked' : ''}> battle</label>
-<label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
+<div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
+${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : '<button class="btn battle" data-a="battle">Battle</button>'}</div>
+<div class="ctl"><label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
 <label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label></div>
-${row('Status', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
-${row('Battle', Battle.engaged ? this.esc(Battle.phase) : this.esc(farm ? (Battle.blockReason(farm, now) || 'ready when farm is idle') : 'off'))}
+${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
+${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : this.esc(farm ? (Battle.blockReason(farm) ? `off (${Battle.blockReason(farm)})` : 'off · press Battle') : 'off'), Battle.engaged ? 'good' : '')}
 ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}`)}
 ${row('Jobs / min', `${live.perMin} / ${live.allowed} (bot budget ${Math.floor(live.allowed * cfg.budgetFraction)})`, live.perMin > live.allowed * cfg.budgetFraction ? 'bad' : '')}
 ${row('Gap variation', `${ratio} (game flags &lt; 0.08, bot holds &lt; ${cfg.minCv}) · n=${live.n}`, isFinite(live.ratio) && live.ratio < cfg.minCv ? 'bad' : '')}
-${row('Energy', farm ? `${farm.today.energy} (meal reserve ${reserve})` : '–')}
+${row('Energy', farm ? `${farm.today.energy} (today's meals still need ${reserve})` : '–')}
 ${row('Farmers', G.Ca.farmers)}
 ${row('Jobs sent / held', `${stats.jobs} / ${stats.refused}`)}
 ${row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good')}
@@ -1007,6 +1028,8 @@ ${accrued == null ? '<p class="hint">passive function not in hook</p>' : row('Ac
 <p class="hint">Delays ${cfg.delayMin}–${cfg.delayMax}s (idle ${cfg.idleMin}–${cfg.idleMax}s, ${Math.round(cfg.idleChance * 100)}%). Edit via <code>__bot.cfg</code>, then <code>__bot.save()</code>.</p>`;
       b.querySelector('[data-a="start"]')?.addEventListener('click', start);
       b.querySelector('[data-a="stop"]')?.addEventListener('click', stop);
+      b.querySelector('[data-a="battle"]')?.addEventListener('click', () => Battle.begin());
+      b.querySelector('[data-a="battleStop"]')?.addEventListener('click', () => Battle.end());
       b.querySelectorAll('[data-c]').forEach((i) => {
         i.onchange = () => {
           cfg[i.dataset.c] = i.checked;
@@ -1099,7 +1122,7 @@ ${farm.fields.length ? `<svg width="${Math.min(360, w)}" height="${h}" viewBox="
   };
 
   // --------------------------------------------------------------- BOOTSTRAP
-  window.__bot = { start, stop, cfg, save: saveCfg, Core, Planner, Battle, Farm, stats, log: LOG, panel: () => Panel.mount() };
+  window.__bot = { start, stop, battle: () => Battle.begin(), stopBattle: () => Battle.end(), cfg, save: saveCfg, Core, Planner, Battle, Farm, stats, log: LOG, panel: () => Panel.mount() };
 
   (async () => {
     const t0 = Date.now();
