@@ -89,7 +89,7 @@
   </div>
 
   <div class="card">
-    <details>
+    <details id="offlineDetails">
       <summary data-i18n="offline">Offline fallback: use a file you already have</summary>
       <p class="hint" data-i18n="offlineHint">If the lookup above fails, choose or paste the whole <code>game-xxxx.js</code> content here. Nothing is uploaded; it runs in your browser.</p>
       <input type="file" id="file" accept=".js,text/javascript">
@@ -182,6 +182,9 @@
       doneMissing: 'Done, but some names were not found.',
       fail: 'Could not read the game file',
       tryOffline: 'try the offline fallback below.',
+      noApi: (st) => `The generator function is not running here (HTTP ${st}). This page only works when deployed on Vercel; opening index.html directly or from a plain static server cannot generate. Use the offline fallback below, or open the deployed site.`,
+      blocked: 'farmingseason.io refused the request from the server (Cloudflare). Use the offline fallback: open the game, press F12 → Sources → assets, open the game-*.js file, select all, copy, and paste it below.',
+      stage: { page: 'loading the game page', locate: 'finding the game file', asset: 'reading a script', bundle: 'downloading the game file' },
       notBundle: 'That does not look like the game file.',
       localDone: 'Generated from your file.',
       copied: 'Copied.',
@@ -258,6 +261,9 @@
       doneMissing: 'Xong, nhưng một số tên không tìm thấy.',
       fail: 'Không đọc được tệp game',
       tryOffline: 'hãy thử phần dự phòng ngoại tuyến bên dưới.',
+      noApi: (st) => `Hàm tạo dòng hook không chạy ở đây (HTTP ${st}). Trang này chỉ hoạt động khi được triển khai trên Vercel; mở trực tiếp index.html hoặc chạy bằng máy chủ tĩnh thông thường thì không tạo được. Hãy dùng phần dự phòng ngoại tuyến bên dưới, hoặc mở trang đã triển khai.`,
+      blocked: 'farmingseason.io đã từ chối yêu cầu từ máy chủ (Cloudflare). Hãy dùng phần dự phòng ngoại tuyến: mở game, nhấn F12 → Sources → assets, mở tệp game-*.js, chọn tất cả, sao chép và dán vào bên dưới.',
+      stage: { page: 'tải trang game', locate: 'tìm tệp game', asset: 'đọc một tệp script', bundle: 'tải tệp game' },
       notBundle: 'Nội dung này không giống tệp game.',
       localDone: 'Đã tạo từ tệp của bạn.',
       copied: 'Đã sao chép.',
@@ -318,12 +324,27 @@
     status.textContent = t('fetching');
     try {
       const r = await fetch(`/api/generate${param ? '?' + param : ''}`, { cache: 'no-store' });
-      const j = await r.json();
-      if (!j.line) throw new Error(j.error || 'no result');
+      const raw = await r.text();
+      let j = null;
+      try { j = JSON.parse(raw); } catch {}
+      if (!j) {
+        // Not JSON: there is no serverless function behind this page.
+        status.innerHTML = `<span class="bad">${t('noApi', r.status)}</span>`;
+        $('#offlineDetails').open = true;
+        return;
+      }
+      if (!j.line) {
+        const st = j.stage && t('stage')[j.stage] ? ` (${t('stage')[j.stage]}${j.upstreamStatus ? `, HTTP ${j.upstreamStatus}` : ''})` : '';
+        const msg = j.upstreamStatus === 403 ? t('blocked') : `${t('fail')}${st}: ${j.error || 'no result'} — ${t('tryOffline')}`;
+        status.innerHTML = `<span class="bad">${msg}</span>`;
+        $('#offlineDetails').open = true;
+        return;
+      }
       status.textContent = j.ok ? t('done') : t('doneMissing');
       show(j, j);
     } catch (e) {
       status.innerHTML = `<span class="bad">${t('fail')}: ${e.message}</span> — ${t('tryOffline')}`;
+      $('#offlineDetails').open = true;
     } finally {
       $('#gen').disabled = false;
     }
