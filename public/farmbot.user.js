@@ -44,6 +44,7 @@
     retryAfter: 60, // seconds to skip a target after a refusal
     defaultCrop: null, // crop id used by 'auto' when a field has no history
     capAware: true, // stop planting cash crops once today's projected income reaches the cap
+    plantKeepsReserve: true, // hold planting while energy − 2 would drop under today's remaining meals
     mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
     bulk: true, // use the game's Harvest all / Plant all path: one bulkStart op, 2 energy for the whole batch
     bulkMin: 2, // batch only when at least this many fields qualify
@@ -51,7 +52,11 @@
     feedDaysAhead: 1, // days of feed to keep in stock (bags + mixable grain)
     mixFeed: true, // mix grain into bags automatically (costs no energy)
     // energy purchases (see Core.energyPlan)
-    autoEnergy: false, // off until you turn it on in the panel
+    autoEnergy: false, // master switch; the reasons below pick what energy may be bought for
+    energyForMeals: true, // today's remaining animal meals
+    energyForWaiting: true, // ready crops, ripe fruit, products, full mine, today's oil
+    energyForCycles: true, // extra plant+harvest cycles under the harvest cap (margin applies)
+    energyForBattle: false, // another arena run while the loot cap is open (margin applies to last run's loot)
     energyMargin: 1.5, // a plant+harvest cycle must return at least this × its energy cost
     energyBuyBelow: 8, // consider buying once energy is under this
     energyMinBuy: 10, // never buy fewer than this at once
@@ -293,11 +298,29 @@
         }
       }
 
-      const reserve = Core.mealReserve(farm, now, h);
+      const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
       if (energy - 2 < reserve) return null;
       const empties = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`) && h.or(f, now).state === 'empty');
       const choice = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties })[0];
       return choice ? { job: { type: 'plant', fieldId: choice.fieldId, crop: choice.crop }, key: `field:${choice.fieldId}`, why: choice.why } : null;
+    },
+
+    // Why nothing is being planted right now, for the status line. null = nothing to explain.
+    idleReason({ farm, now, queued, plan, last, cfg, h, skip = {} }) {
+      const free = (key) => !queued.has(key) && !(skip[key] > now);
+      const empties = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`) && h.or(f, now).state === 'empty');
+      if (!empties.length) return null;
+      const energy = farm.today.energy;
+      if (energy < 2) return `${empties.length} empty field(s), no energy`;
+      const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
+      if (energy - 2 < reserve) return `${empties.length} empty field(s): keeping ${reserve} energy for today's meals, planting needs ${reserve + 2} (have ${energy}). Turn off "keep energy for meals" or buy energy.`;
+      const choices = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties });
+      if (!choices.length) {
+        const proj = cfg.capAware !== false && h.cap ? Core.incomeProjection(farm, now, h) : null;
+        if (proj && proj.total >= proj.cap) return `${empties.length} empty field(s): harvest cap reached and the silo is ${proj.siloOk ? 'ready' : 'full or missing'}`;
+        return `${empties.length} empty field(s): no crop could be chosen (check the plan)`;
+      }
+      return null;
     },
 
     // What to plant on each of the given empty fields, in order. Feed-first needs are spread
@@ -371,7 +394,7 @@
         const jobs = Core.walkOrder(ready).map((f) => ({ job: { type: 'harvest', fieldId: f.id }, key: `field:${f.id}`, why: 'ready', crop: h.or(f, now).crop?.id }));
         return { kind: 'harvest', jobs };
       }
-      const reserve = Core.mealReserve(farm, now, h);
+      const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
       if (energy - 2 < reserve) return null;
       const empties = built.filter((f) => h.or(f, now).state === 'empty');
       if (empties.length < min) return null;
@@ -397,9 +420,10 @@
       const pricePer = h.energyPrice(farm, 10) / 10;
       out.pricePer = pricePer;
 
-      // 1. waiting work
+      // 1. waiting work, split by reason
       const win = Core.mealWindow(now, farm.tz);
-      let need = Core.mealReserve(farm, now, h);
+      const meals = cfg.energyForMeals === false ? 0 : Core.mealReserve(farm, now, h);
+      let need = 0;
       const readyFields = farm.fields.filter((f) => f.crop && Core.isBuilt(f, now) && h.or(f, now).state === 'ready').length;
       need += cfg.bulk && readyFields >= (cfg.bulkMin ?? 2) ? 2 : readyFields * 2;
       for (const s of farm.structures) {
@@ -416,6 +440,10 @@
         if (b && b.animal && readyKinds.has(b.animal)) need += 2;
       }
       void win;
+      if (cfg.energyForWaiting === false) need = 0;
+      out.waiting = need;
+      out.meals = meals;
+      need += meals;
       out.need = need;
 
       // 2. extra cycles today
@@ -448,12 +476,13 @@
         room -= v;
         cycles++;
       }
+      if (cfg.energyForCycles === false) cycles = 0;
       out.cycles = cycles;
       out.cycleEnergy = Math.ceil(cycles * perCycle);
 
       const target = need + out.cycleEnergy;
       let shortfall = target - energy;
-      if (shortfall <= 0) return { ...out, reason: `energy ${energy} covers ${need} waiting + ${cycles} cycles` };
+      if (shortfall <= 0) return { ...out, reason: `energy ${energy} covers ${out.meals} meals + ${out.waiting} waiting + ${cycles} cycles` };
 
       // amount: at least energyMinBuy, at most energyMaxBuy, within the daily cap and the wallet
       let buy = Math.min(cfg.energyMaxBuy, Math.max(cfg.energyMinBuy, Math.ceil(shortfall / 10) * 10));
@@ -463,7 +492,26 @@
       const budget = Math.floor(wallet * cfg.energyTokenFraction);
       while (buy > 0 && h.energyPrice(farm, buy) > budget) buy -= 10;
       if (buy < Math.min(cfg.energyMinBuy, 10)) return { ...out, reason: `wallet ${farm.tokens} too low (budget ${budget})` };
-      return { ...out, buy, reason: `${need} for waiting work + ${out.cycleEnergy} for ${cycles} cycles − ${energy} on hand` };
+      return { ...out, buy, reason: `${out.meals} for meals + ${out.waiting} for waiting work + ${out.cycleEnergy} for ${cycles} cycles − ${energy} on hand` };
+    },
+
+    // Energy for one more arena run. A run costs 5; buy only if the previous run's loot was worth
+    // at least energyMargin × the price of those 5, within the same daily and wallet limits.
+    battleEnergyPlan({ farm, h, cfg, lastLoot, boughtToday = 0 }) {
+      if (!cfg.autoEnergy || !cfg.energyForBattle || !h.energyPrice) return { buy: 0, reason: 'battle purchases off' };
+      const energy = farm.today.energy;
+      if (energy >= 5) return { buy: 0, reason: `energy ${energy} ≥ 5` };
+      const price5 = h.energyPrice(farm, 5);
+      if (lastLoot != null && lastLoot < price5 * cfg.energyMargin) return { buy: 0, reason: `last run earned ${Math.round(lastLoot)} < ${Math.ceil(price5 * cfg.energyMargin)} (5 energy × margin)` };
+      let buy = Math.max(cfg.energyMinBuy, 5 - energy);
+      buy = Math.ceil(buy / 5) * 5;
+      buy = Math.min(buy, Math.max(0, cfg.energyMaxPerDay - boughtToday));
+      if (buy <= 0) return { buy: 0, reason: `daily limit ${cfg.energyMaxPerDay} reached` };
+      const wallet = Math.max(0, (farm.tokens || 0) - cfg.energyTokenKeep);
+      const budget = Math.floor(wallet * cfg.energyTokenFraction);
+      while (buy >= 5 && h.energyPrice(farm, buy) > budget) buy -= 5;
+      if (buy < 5 || energy + buy < 5) return { buy: 0, reason: `wallet ${farm.tokens} too low (budget ${budget})` };
+      return { buy, reason: `another run (last loot ${lastLoot == null ? 'unknown' : Math.round(lastLoot)})` };
     },
 
     shouldClaim(accrued, lastClaimAt, now, cfg) {
@@ -813,26 +861,36 @@
     },
     boughtDay: null,
     boughtToday: 0,
-    buyEnergy(farm, now) {
-      if (!cfg.autoEnergy || !G.energyPrice) return;
+    rollDay(farm, now) {
       const day = Core.mealWindow(now, farm.tz).slice(0, 10);
       if (this.boughtDay !== day) {
         this.boughtDay = day;
         this.boughtToday = 0;
       }
+    },
+    // Same op the shop's "Buy" button uses. Not a farmer job, so the game does not count it
+    // in recordJob; purchases are still spaced by energyBuyEvery.
+    purchase(farm, now, amount, reason, force = false) {
+      if (!force && now - this.lastBuyAt < cfg.energyBuyEvery * SEC) return false;
+      const cost = G.energyPrice(farm, amount);
+      this.lastBuyAt = now;
+      const r = G.q.op('buyEnergy', amount);
+      if (r.ok) {
+        this.boughtToday += amount;
+        stats.energyBought += amount;
+        stats.energySpent += cost;
+        log(`Bought ${amount} energy for ${cost} tokens (${reason}).`, 'good');
+        return true;
+      }
+      log(`Energy purchase refused: ${r.msg}`, 'bad');
+      return false;
+    },
+    buyEnergy(farm, now) {
+      if (!cfg.autoEnergy || !G.energyPrice) return;
+      this.rollDay(farm, now);
       const p = Core.energyPlan({ farm, now, h: helpers(), cfg, plan: Planner.plan, last: Planner.last, boughtToday: this.boughtToday });
       this.lastEnergyPlan = p;
-      if (!p.buy || now - this.lastBuyAt < cfg.energyBuyEvery * SEC) return;
-      const cost = G.energyPrice(farm, p.buy);
-      this.lastBuyAt = now;
-      // Same op the shop's "Buy" button uses. Not a farmer job: not counted by recordJob.
-      const r = G.q.op('buyEnergy', p.buy);
-      if (r.ok) {
-        this.boughtToday += p.buy;
-        stats.energyBought += p.buy;
-        stats.energySpent += cost;
-        log(`Bought ${p.buy} energy for ${cost} tokens (${p.reason}).`, 'good');
-      } else log(`Energy purchase refused: ${r.msg}`, 'bad');
+      if (p.buy) this.purchase(farm, now, p.buy, p.reason);
     },
     farmReady() {
       return G.U.place === 'farm' && !G.q.visiting && G.U.mode.type === 'normal';
@@ -906,7 +964,8 @@
       const pick = Core.pickJob(args);
 
       if (!pick) {
-        this.status = 'idle';
+        const why = Core.idleReason(args);
+        this.status = why ? `idle: ${why}` : 'idle';
         return;
       }
 
@@ -944,6 +1003,7 @@
     retreating: false,
     hiddenWarned: false,
     strafe: 1,
+    lastLoot: null,
     dodges: 0,
     projEvades: 0,
     projDodges: 0,
@@ -1205,6 +1265,7 @@
         }
         if (s.mode === 'over') {
           if (s.run.capHit) this.capDay = this.today();
+          this.lastLoot = s.run.loot;
           this.unpatch();
           this.retreating = false;
           log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading)${s.run.died ? ', died' : ''}.`);
@@ -1216,6 +1277,12 @@
 
       if (this.phase === 'summary') {
         if (age < 1500) return;
+        if (farm.today.energy < 5 && cfg.autoEnergy && cfg.energyForBattle && G.energyPrice && !this.stopRequested && this.capDay !== this.today()) {
+          Farm.rollDay(farm, G.W.now());
+          const p = Core.battleEnergyPlan({ farm, h: helpers(), cfg, lastLoot: this.lastLoot, boughtToday: Farm.boughtToday });
+          if (p.buy) Farm.purchase(farm, G.W.now(), p.buy, `battle: ${p.reason}`, true);
+          else log(`No energy bought for battle: ${p.reason}.`);
+        }
         const why = this.blockReason(farm);
         if (!why && !G.Ca.blocked) {
           const again = $('#battle-ui [data-b="again"]');
@@ -1387,10 +1454,16 @@
       b.innerHTML = `
 <div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
 ${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : '<button class="btn battle" data-a="battle">Battle</button>'}</div>
-<div class="ctl"><label class="tg" title="Buy energy when it runs low, only for work that pays: waiting meals/harvests, plus extra crop cycles that fit under today's cap and return at least ${cfg.energyMargin}× their cost."><input type="checkbox" data-c="autoEnergy" ${cfg.autoEnergy ? 'checked' : ''}> auto-buy energy</label>
-<label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
+<div class="ctl"><label class="tg" title="Master switch. The reasons below say what energy may be bought for."><input type="checkbox" data-c="autoEnergy" ${cfg.autoEnergy ? 'checked' : ''}> auto-buy energy</label>
+<span class="hint">for:</span>
+<label class="tg" title="Today's remaining animal meals (2 per animal building per meal window left)."><input type="checkbox" data-c="energyForMeals" ${cfg.energyForMeals ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> meals</label>
+<label class="tg" title="Ready crops, ripe fruit, products waiting, a full mine, today's oil."><input type="checkbox" data-c="energyForWaiting" ${cfg.energyForWaiting ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> waiting harvests</label>
+<label class="tg" title="Extra plant+harvest cycles that still fit under today's harvest cap and earn at least ${cfg.energyMargin}× their energy cost."><input type="checkbox" data-c="energyForCycles" ${cfg.energyForCycles ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> extra crop cycles</label>
+<label class="tg" title="Between arena runs: buy 5 more when the loot cap is open and the last run earned at least ${cfg.energyMargin}× the price of 5 energy."><input type="checkbox" data-c="energyForBattle" ${cfg.energyForBattle ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> battle runs</label></div>
+<div class="ctl"><label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
 <label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label>
-<label class="tg" title="Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game"><input type="checkbox" data-c="bulk" ${cfg.bulk ? 'checked' : ''}> batch fields</label></div>
+<label class="tg" title="Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game"><input type="checkbox" data-c="bulk" ${cfg.bulk ? 'checked' : ''}> batch fields</label>
+<label class="tg" title="On: planting waits while energy − 2 would drop under what today's remaining animal meals need (2 per animal building per meal window left). Off: plant whenever you have 2 energy; feeding still comes first when an animal is hungry."><input type="checkbox" data-c="plantKeepsReserve" ${cfg.plantKeepsReserve ? 'checked' : ''}> keep energy for meals</label></div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
 ${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : this.esc(farm ? (Battle.blockReason(farm) ? `off (${Battle.blockReason(farm)})` : 'off · press Battle') : 'off'), Battle.engaged ? 'good' : '')}
 ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}`)}
