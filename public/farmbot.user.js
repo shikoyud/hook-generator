@@ -63,6 +63,9 @@
     keepAliveMax: 45,
     perkPriority: [],
     mortarRadius: 30, // game hurts within 18 px of a marker; keep a margin
+    projectileMargin: 16, // extra clearance beyond the game's 6/8 px hit radius
+    projectileHorizon: 1.4, // seconds ahead to look for incoming shots
+    projectileDashAt: 0.35, // dash (dodge) when impact is this close and sidestepping is late
   };
 
   // -------------------------------------------------------------------- CORE
@@ -360,6 +363,47 @@
       }
       void onTop;
       return { vec: [vx / len, vy / len], nearest };
+    },
+
+    // Predictive evasion for arrows and fireballs.
+    // hero: {x, y} (the game tests hits against y - 6; pass the adjusted point).
+    // projs: [{x, y, vx, vy, kind}] with velocity in px/s.
+    // Returns {vec:[x,y]|null, dash:boolean, dashVec:[x,y]|null, threats:number, soonest:number}.
+    //
+    // For each shot, find the time and distance of closest approach along its straight path.
+    // If it will pass inside the hit radius + margin within the horizon, sidestep perpendicular
+    // to its flight, on the side the hero is already offset to. Nearer shots weigh more. When a
+    // hit is imminent and the hero is still inside the lane, ask for a dash as well: the dodge
+    // makes the hero untouchable for its duration.
+    projectileEvasion(hero, projs, opts = {}) {
+      const margin = opts.margin ?? 16, horizon = opts.horizon ?? 1.4, dashAt = opts.dashAt ?? 0.35;
+      let vx = 0, vy = 0, threats = 0, soonest = Infinity, dash = false, dashVec = null;
+      for (const p of projs) {
+        const sp2 = p.vx * p.vx + p.vy * p.vy;
+        if (sp2 < 1) continue;
+        const rx = hero.x - p.x, ry = hero.y - p.y;
+        const tc = (rx * p.vx + ry * p.vy) / sp2; // time to closest approach
+        if (tc < 0 || tc > horizon) continue; // moving away, or too far off to matter yet
+        const mx = rx - p.vx * tc, my = ry - p.vy * tc; // miss vector at closest approach
+        const miss = Math.hypot(mx, my);
+        const radius = (p.kind === 'fireball' ? 8 : 6) + margin;
+        if (miss >= radius) continue;
+        threats++;
+        soonest = Math.min(soonest, tc);
+        const sp = Math.sqrt(sp2);
+        let px = -p.vy / sp, py = p.vx / sp; // unit perpendicular
+        const side = mx * px + my * py;
+        if (side < 0 || (side === 0 && (opts.preferSign ?? 1) < 0)) (px = -px), (py = -py);
+        const w = (1 - miss / radius) * (1 + (horizon - tc) / horizon);
+        vx += px * w;
+        vy += py * w;
+        if (tc <= dashAt && miss < radius - margin / 2) {
+          dash = true;
+          dashVec = [px, py];
+        }
+      }
+      const len = Math.hypot(vx, vy);
+      return { vec: len > 1e-6 ? [vx / len, vy / len] : null, dash, dashVec, threats, soonest };
     },
 
     fmtMinutes(m) {
@@ -712,6 +756,8 @@
     hiddenWarned: false,
     strafe: 1,
     dodges: 0,
+    projEvades: 0,
+    projDodges: 0,
 
     scene() {
       try {
@@ -807,6 +853,31 @@
           return esc.vec;
         }
       }
+      // Arrows and fireballs: sidestep early, dash only when it is about to land.
+      const projs = (s.projs || []).filter((p) => p.sprite && p.sprite.active).map((p) => ({ x: p.sprite.x, y: p.sprite.y, vx: p.vx, vy: p.vy, kind: p.kind }));
+      if (projs.length) {
+        const ev = Core.projectileEvasion({ x: hero.x, y: hero.y - 6 }, projs, { margin: cfg.projectileMargin, horizon: cfg.projectileHorizon, dashAt: cfg.projectileDashAt, preferSign: this.strafe });
+        if (ev.vec) {
+          if (ev.dash && hero.dodgeCd <= 0 && hero.dodge(ev.dashVec[0], ev.dashVec[1])) this.projDodges++;
+          this.projEvades++;
+          // keep a little of the normal behaviour so the hero still closes in afterwards
+          const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
+          const x = ev.vec[0] * 0.85 + base[0] * 0.15, y = ev.vec[1] * 0.85 + base[1] * 0.15;
+          const l = Math.hypot(x, y) || 1;
+          return [x / l, y / l];
+        }
+      }
+      // A ranged enemy winding up aims at where the hero stands (archers lock the spot, wizards
+      // track): drift sideways so the shot is already off-line when it leaves.
+      const shooter = s.enemies.find((e) => e.alive && e.state === 'windup' && e.rule && (e.rule.brain === 'archer' || e.rule.brain === 'caster') && Math.hypot(e.x - hero.x, e.y - hero.y) < 260);
+      if (shooter) {
+        const dx = hero.x - shooter.x, dy = hero.y - shooter.y, d = Math.hypot(dx, dy) || 1;
+        const sx = (-dy / d) * this.strafe, sy = (dx / d) * this.strafe;
+        const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
+        const x = sx * 0.6 + base[0] * 0.4, y = sy * 0.6 + base[1] * 0.4;
+        const l = Math.hypot(x, y) || 1;
+        return [x / l, y / l];
+      }
       const boss = s.enemies.find((e) => e.isBoss && e.alive);
       if (boss && boss.state === 'windup' && boss.nextMove === 'mortar') {
         // Mortars will target where the hero stands when the volley fires: keep moving sideways.
@@ -853,6 +924,7 @@
       window.dispatchEvent(new KeyboardEvent('keyup', init));
     },
     keepAlive() {
+      if (Math.random() < 0.02) this.strafe = -this.strafe; // vary the strafe side now and then
       if (Date.now() < this.keepAliveAt) return;
       this.keepAliveAt = Date.now() + rand(cfg.keepAliveMin, cfg.keepAliveMax) * SEC;
       this.key('KeyX', 'x');
@@ -893,6 +965,8 @@
         if (s.run.active) {
           stats.battles++;
           this.dodges = 0;
+          this.projEvades = 0;
+          this.projDodges = 0;
           log(`Battle run started (energy ${farm.today.energy}).`);
           return this.setPhase('run');
         }
@@ -944,7 +1018,7 @@
           if (s.run.capHit) this.capDay = this.today();
           this.unpatch();
           this.retreating = false;
-          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges${s.run.died ? ', died' : ''}.`);
+          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading)${s.run.died ? ', died' : ''}.`);
           return this.setPhase('summary');
         }
         if (s.mode === 'lobby') return this.setPhase('go');
