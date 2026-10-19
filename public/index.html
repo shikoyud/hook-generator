@@ -6,9 +6,9 @@
 <title>Farming Season bot helper</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Handjet:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-  /* Farming Season look: grass, wood signs, parchment, hard pixel edges. VT323 is the font the game ships. */
+  /* Farming Season look: grass, wood signs, parchment, hard pixel edges. Handjet is a pixel-grid font with full Vietnamese. */
   :root {
     --grass:#5fae4f; --grass-dark:#3f8a3a; --grass-light:#7cc46a;
     --wood:#5a4631; --wood-dark:#3b2c1e; --wood-light:#8a6d4a;
@@ -19,7 +19,7 @@
   * { box-sizing: border-box; }
   html { image-rendering: pixelated; }
   body {
-    margin:0; color:var(--ink); font: 20px/1.35 'VT323', ui-monospace, monospace;
+    margin:0; color:var(--ink); font: 22px/1.3 'Handjet', ui-monospace, monospace; font-weight: 500;
     background-color: var(--grass);
     background-image:
       linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px),
@@ -43,13 +43,13 @@
   }
   .top { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
   h1 {
-    margin:0; color:#fff; font: 18px/1.5 'Press Start 2P', 'VT323', monospace;
+    margin:0; color:#fff; font: 800 34px/1.1 'Handjet', monospace; letter-spacing: .5px;
     text-shadow: var(--px) var(--px) 0 var(--wood-dark), calc(var(--px)*-1) 0 0 var(--wood-dark), 0 calc(var(--px)*-1) 0 var(--wood-dark), var(--px) 0 0 var(--wood-dark), 0 var(--px) 0 var(--wood-dark);
     display:flex; align-items:center; gap:12px;
   }
   h1 svg { flex:none; }
   .langs { display:flex; gap:6px; }
-  .langs button { background:var(--paper); color:var(--wood); border: var(--px) solid var(--wood-dark); box-shadow: var(--px) var(--px) 0 var(--wood-dark); padding:6px 12px; font: inherit; font-size:18px; cursor:pointer; }
+  .langs button { background:var(--paper); color:var(--wood); border: var(--px) solid var(--wood-dark); box-shadow: var(--px) var(--px) 0 var(--wood-dark); padding:6px 12px; font: inherit; font-size:20px; cursor:pointer; }
   .langs button.on { background:var(--gold); color:var(--wood-dark); }
   .sub { color:#fff; margin:0 0 18px; text-shadow: 2px 2px 0 var(--wood-dark); font-size:22px; }
   .sub a { color:var(--gold); }
@@ -58,22 +58,22 @@
   .card { border: var(--px) solid var(--wood-dark); box-shadow: 0 0 0 var(--px) var(--wood-light), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark), inset 0 0 0 var(--px) var(--paper-dark); }
   .card::before, .card::after { content:""; position:absolute; width: calc(var(--px)*3); height: calc(var(--px)*3); background: var(--wood-light); border: var(--px) solid var(--wood-dark); }
   .card::before { left:-7px; top:-7px; } .card::after { right:-7px; top:-7px; }
-  h2 { margin: 36px 0 16px; color:#fff; font: 16px/1.6 'Press Start 2P', 'VT323', monospace; text-shadow: var(--px) var(--px) 0 var(--wood-dark), 0 0 0 var(--wood-dark); display:flex; align-items:center; gap:12px; }
-  h3 { margin: -16px -18px 14px; padding: 8px 18px; background: var(--wood); color: var(--paper); font: 13px/1.6 'Press Start 2P', 'VT323', monospace; border-bottom: var(--px) solid var(--wood-dark); box-shadow: inset 0 calc(var(--px)*-1) 0 var(--wood-light); }
+  h2 { margin: 36px 0 16px; color:#fff; font: 800 30px/1.2 'Handjet', monospace; text-shadow: var(--px) var(--px) 0 var(--wood-dark), 0 0 0 var(--wood-dark); display:flex; align-items:center; gap:12px; }
+  h3 { margin: -16px -18px 14px; padding: 8px 18px; background: var(--wood); color: var(--paper); font: 800 24px/1.3 'Handjet', monospace; letter-spacing:.5px; border-bottom: var(--px) solid var(--wood-dark); box-shadow: inset 0 calc(var(--px)*-1) 0 var(--wood-light); }
   .card p { margin: 8px 0; }
   label { display:block; font-weight:600; margin-bottom:4px; }
-  input[type=url], input[type=number], textarea, select { width:100%; font: 18px/1.3 'VT323', monospace; padding:8px 10px; background:#fff; border: var(--px) solid var(--wood-dark); box-shadow: inset var(--px) var(--px) 0 var(--paper-dark); color:var(--ink); }
+  input[type=url], input[type=number], textarea, select { width:100%; font: 20px/1.3 'Handjet', monospace; padding:8px 10px; background:#fff; border: var(--px) solid var(--wood-dark); box-shadow: inset var(--px) var(--px) 0 var(--paper-dark); color:var(--ink); }
   textarea { min-height: 72px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
   button { font: inherit; font-size:20px; border: var(--px) solid var(--wood-dark); padding:8px 16px; cursor:pointer; color:#fff; background:var(--green); box-shadow: var(--px) var(--px) 0 var(--wood-dark), inset 0 var(--px) 0 rgba(255,255,255,.35), inset 0 calc(var(--px)*-1) 0 rgba(0,0,0,.25); text-shadow: 1px 1px 0 rgba(0,0,0,.4); }
   button:active { transform: translate(var(--px), var(--px)); box-shadow: 0 0 0 var(--wood-dark), inset 0 var(--px) 0 rgba(0,0,0,.2); }
   button.secondary { background:var(--wood-light); }
-  button.big { font: 14px/1.6 'Press Start 2P', monospace; padding:14px 22px; background:var(--gold); color:var(--wood-dark); text-shadow:none; }
+  button.big { font: 800 26px/1.2 'Handjet', monospace; padding:14px 26px; background:var(--gold); color:var(--wood-dark); text-shadow:none; }
   button:disabled { opacity:.6; cursor:wait; }
   .out { display:none; } .out.show { display:block; }
   .line { font: 17px/1.5 ui-monospace, monospace; background:#fff; border: var(--px) dashed var(--wood); padding:10px; word-break:break-all; }
   .ok { color:var(--green); } .bad { color:var(--red); }
-  table { width:100%; border-collapse:collapse; font-size:18px; margin-top:10px; }
+  table { width:100%; border-collapse:collapse; font-size:20px; margin-top:10px; }
   td, th { text-align:left; padding:6px; border-bottom: 2px solid var(--paper-dark); vertical-align:top; }
   th { background: var(--paper-dark); color: var(--wood-dark); }
   td.miss { color:var(--red); font-weight:600; }
@@ -82,21 +82,33 @@
   ol, ul { padding-left: 22px; } li { margin: 6px 0; }
   code, kbd { background:#fff; border: 2px solid var(--paper-dark); padding:0 5px; font: 16px/1.3 ui-monospace, monospace; }
   kbd { border-color: var(--wood-light); box-shadow: 0 2px 0 var(--wood-light); }
-  .hint { color:#5d4d38; font-size:18px; }
+  .hint { color:#5d4d38; font-size:19px; }
   .warn { background:var(--gold); border: var(--px) solid var(--gold-dark); box-shadow: var(--px) var(--px) 0 var(--gold-dark); padding:8px 12px; color:var(--wood-dark); }
   a { color: var(--green); }
 
+  /* donation banner */
+  .donate { display:flex; align-items:center; gap:14px; flex-wrap:wrap; background: linear-gradient(180deg, #ffe08a, var(--gold)); padding:12px 16px; margin: 4px 0 18px; animation: glow 1.6s ease-in-out infinite alternate; }
+  .donate .donate-ico { flex:none; }
+  .donate .donate-text { flex:1; min-width: 220px; display:flex; flex-direction:column; gap:2px; }
+  .donate b { font: 800 26px/1.1 'Handjet', monospace; color: var(--wood-dark); }
+  .donate span { color: var(--wood-dark); font-size: 19px; }
+  .donate code.wallet { display:inline-block; margin-top:4px; background:#fff; border: 2px solid var(--gold-dark); padding:4px 8px; font: 15px/1.3 ui-monospace, monospace; word-break: break-all; }
+  .donate button { background: var(--red); font-size: 22px; }
+  @keyframes glow { from { box-shadow: 0 0 0 var(--px) var(--gold-dark), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark), 0 0 0 0 rgba(242,201,76,.0); } to { box-shadow: 0 0 0 var(--px) var(--gold-dark), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark), 0 0 18px 6px rgba(255,224,138,.75); } }
+  @media (prefers-reduced-motion: reduce) { .donate { animation: none; } }
   /* coffee sign: a hanging wooden board */
-  .coffee { position:static; width:auto; max-width:800px; margin:28px auto 0; background:var(--wood); color:var(--paper); padding:14px 14px 12px; border: var(--px) solid var(--wood-dark); box-shadow: 0 0 0 var(--px) var(--wood-light), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark); display:flex; flex-direction:column; gap:8px; }
+  .coffee { position:fixed; left:12px; bottom:12px; z-index:50; width:236px; margin:0; border-color: var(--gold-dark); transform: translateY(140%); opacity:0; transition: transform .35s ease, opacity .35s ease; pointer-events:none;
+  }
+  .coffee.show { transform:none; opacity:1; pointer-events:auto; }
+  .coffee { background:var(--wood); color:var(--paper); padding:14px 14px 12px; border: var(--px) solid var(--wood-dark); box-shadow: 0 0 0 var(--px) var(--wood-light), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark); display:flex; flex-direction:column; gap:8px; }
+  .coffee { outline: var(--px) solid var(--gold); outline-offset: calc(var(--px)*2); }
   .coffee::before { content:""; position:absolute; left:50%; top:-14px; width:4px; height:14px; margin-left:-2px; background:var(--wood-dark); box-shadow: -40px 0 0 var(--wood-dark), 40px 0 0 var(--wood-dark); }
-  .coffee b { color:var(--gold); font: 11px/1.6 'Press Start 2P', monospace; display:flex; align-items:center; gap:8px; }
+  .coffee b { color:var(--gold); font: 800 22px/1.2 'Handjet', monospace; display:flex; align-items:center; gap:8px; }
   .coffee code { display:block; font: 13px/1.4 ui-monospace, monospace; word-break: break-all; background:var(--paper); color:var(--ink); padding:6px 8px; border:0; }
   .coffee .row { margin:0; }
   .coffee button { padding:6px 10px; font-size:18px; }
-  .coffee::before { display:none; }
-  /* pin the sign to the corner only when the margin beside the page column can hold it */
-  @media (min-width: 1340px) { .coffee { position:fixed; left:16px; bottom:16px; z-index:50; width:236px; margin:0; } .coffee::before { display:block; } }
-  @media (max-width: 720px) { h1 { font-size:14px; } body { font-size:19px; } }
+  @media (max-width: 720px) { .coffee { width:auto; right:12px; } .coffee code.wallet { font-size:12px; } }
+  @media (max-width: 720px) { h1 { font-size:28px; } body { font-size:21px; } }
 </style>
 </head>
 <body>
@@ -104,6 +116,13 @@
   <div class="top">
     <h1><svg width="32" height="32" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><rect x="6" y="0" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="1" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="1" width="1" height="1" fill="#3b2c1e"/><rect x="7" y="1" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="2" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="2" width="1" height="1" fill="#f2c94c"/><rect x="6" y="2" width="1" height="1" fill="#f2c94c"/><rect x="7" y="2" width="1" height="1" fill="#f2c94c"/><rect x="8" y="2" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="3" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="3" width="1" height="1" fill="#f2c94c"/><rect x="6" y="3" width="1" height="1" fill="#f2c94c"/><rect x="7" y="3" width="1" height="1" fill="#f2c94c"/><rect x="8" y="3" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="3" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="4" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="4" width="1" height="1" fill="#f2c94c"/><rect x="7" y="4" width="1" height="1" fill="#3b2c1e"/><rect x="10" y="4" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="4" width="1" height="1" fill="#f2c94c"/><rect x="12" y="4" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="5" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="5" width="1" height="1" fill="#f2c94c"/><rect x="6" y="5" width="1" height="1" fill="#f2c94c"/><rect x="7" y="5" width="1" height="1" fill="#f2c94c"/><rect x="8" y="5" width="1" height="1" fill="#3b2c1e"/><rect x="10" y="5" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="5" width="1" height="1" fill="#f2c94c"/><rect x="12" y="5" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="6" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="6" width="1" height="1" fill="#f2c94c"/><rect x="6" y="6" width="1" height="1" fill="#f2c94c"/><rect x="7" y="6" width="1" height="1" fill="#f2c94c"/><rect x="8" y="6" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="6" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="7" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="7" width="1" height="1" fill="#f2c94c"/><rect x="7" y="7" width="1" height="1" fill="#3b2c1e"/><rect x="10" y="7" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="7" width="1" height="1" fill="#f2c94c"/><rect x="12" y="7" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="8" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="8" width="1" height="1" fill="#f2c94c"/><rect x="6" y="8" width="1" height="1" fill="#f2c94c"/><rect x="7" y="8" width="1" height="1" fill="#f2c94c"/><rect x="8" y="8" width="1" height="1" fill="#3b2c1e"/><rect x="10" y="8" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="8" width="1" height="1" fill="#f2c94c"/><rect x="12" y="8" width="1" height="1" fill="#3b2c1e"/><rect x="4" y="9" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="9" width="1" height="1" fill="#f2c94c"/><rect x="6" y="9" width="1" height="1" fill="#f2c94c"/><rect x="7" y="9" width="1" height="1" fill="#f2c94c"/><rect x="8" y="9" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="9" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="10" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="10" width="1" height="1" fill="#f2c94c"/><rect x="7" y="10" width="1" height="1" fill="#3b2c1e"/><rect x="11" y="10" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="11" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="11" width="1" height="1" fill="#f2c94c"/><rect x="7" y="11" width="1" height="1" fill="#3b2c1e"/><rect x="10" y="11" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="12" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="12" width="1" height="1" fill="#f2c94c"/><rect x="7" y="12" width="1" height="1" fill="#3b2c1e"/><rect x="9" y="12" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="13" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="13" width="1" height="1" fill="#f2c94c"/><rect x="7" y="13" width="1" height="1" fill="#3b2c1e"/><rect x="8" y="13" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="14" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="14" width="1" height="1" fill="#f2c94c"/><rect x="7" y="14" width="1" height="1" fill="#3b2c1e"/><rect x="5" y="15" width="1" height="1" fill="#3b2c1e"/><rect x="6" y="15" width="1" height="1" fill="#3b2c1e"/><rect x="7" y="15" width="1" height="1" fill="#3b2c1e"/></svg><span data-i18n="title">Farming Season bot helper</span></h1>
     <div class="langs"><button data-lang="en">English</button><button data-lang="vi">Tiếng Việt</button></div>
+  </div>
+
+  <div class="donate px-frame">
+    <div class="donate-ico"><svg width="32" height="32" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><rect x="4" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="7" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="10" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="3" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="6" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="9" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="4" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="7" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="10" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="1" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="4" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="5" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="6" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="7" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="8" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="9" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="10" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="13" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="14" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="14" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="13" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="10" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="10" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="11" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="11" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="4" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="5" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="6" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="7" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="8" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="2" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="3" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="4" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="5" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="6" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="7" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="8" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="9" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="10" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="1" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="2" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="3" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="4" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="5" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="6" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="7" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="8" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="9" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="10" y="14" width="1" height="1" fill="#8a6d4a"/></svg></div>
+    <div class="donate-text"><b data-i18n="coffee">Buy me a coffee</b><span data-i18n="donateSub">If the bot saves you time, a coffee keeps it updated after every game patch. Thank you!</span>
+    <code class="wallet">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code></div>
+    <button class="copy-wallet" data-i18n="copy">Copy</button><span class="wallet-copied hint"></span>
   </div>
 
   <p class="sub" data-i18n="intro">This page makes the one line the bot needs from the game file that <b>farmingseason.io</b> is serving right now, and explains how to set the bot up. New here? Start with <a href="#guide">the guide</a>.</p>
@@ -224,10 +243,10 @@
 
 <aside class="coffee" aria-label="Buy me a coffee">
   <b><svg width="32" height="32" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><rect x="4" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="7" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="10" y="1" width="1" height="1" fill="#e7d9b0"/><rect x="3" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="6" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="9" y="2" width="1" height="1" fill="#e7d9b0"/><rect x="4" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="7" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="10" y="3" width="1" height="1" fill="#e7d9b0"/><rect x="1" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="4" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="5" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="6" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="7" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="8" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="9" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="10" y="5" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="6" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="13" y="6" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="7" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="14" y="7" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="8" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="14" y="8" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="3" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="9" width="1" height="1" fill="#5a3a1e"/><rect x="10" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="12" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="13" y="9" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="10" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="10" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="10" width="1" height="1" fill="#fbf2d5"/><rect x="2" y="11" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="4" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="5" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="6" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="7" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="8" y="11" width="1" height="1" fill="#5a3a1e"/><rect x="9" y="11" width="1" height="1" fill="#fbf2d5"/><rect x="3" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="4" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="5" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="6" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="7" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="8" y="12" width="1" height="1" fill="#fbf2d5"/><rect x="1" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="2" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="3" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="4" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="5" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="6" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="7" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="8" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="9" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="10" y="13" width="1" height="1" fill="#8a6d4a"/><rect x="1" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="2" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="3" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="4" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="5" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="6" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="7" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="8" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="9" y="14" width="1" height="1" fill="#8a6d4a"/><rect x="10" y="14" width="1" height="1" fill="#8a6d4a"/></svg><span data-i18n="coffee">Buy me a coffee</span></b>
-  <code id="wallet" title="0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code>
+  <code class="wallet" title="0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code>
   <div class="row">
-    <button class="secondary" id="copyWallet" data-i18n="copy">Copy</button>
-    <span id="walletCopied" class="hint"></span>
+    <button class="copy-wallet" data-i18n="copy">Copy</button>
+    <span class="wallet-copied hint"></span>
   </div>
 </aside>
 
@@ -260,6 +279,7 @@
     vi: {
       title: 'Trợ lý bot Farming Season',
       coffee: 'Mời mình ly cà phê',
+      donateSub: 'Nếu bot giúp bạn tiết kiệm thời gian, một ly cà phê sẽ giúp nó được cập nhật sau mỗi bản vá của game. Cảm ơn bạn!',
       copy: 'Sao chép',
       intro: 'Trang này tạo ra dòng lệnh duy nhất mà bot cần, lấy từ tệp game mà <b>farmingseason.io</b> đang phát hành ngay lúc này, và hướng dẫn cách cài bot. Mới dùng lần đầu? Hãy bắt đầu với <a href="#guide">phần hướng dẫn</a>.',
       genTitle: 'Dòng hook',
@@ -429,7 +449,14 @@
     setTimeout(() => (el.textContent = ''), 2000);
   };
   $('#copy').onclick = () => copyTo(lineEl.textContent, $('#copied'));
-  $('#copyWallet').onclick = () => copyTo($('#wallet').textContent, $('#walletCopied'));
+  // show the corner sign only once the top banner has scrolled out of view
+  const banner = document.querySelector('.donate'), sign = document.querySelector('.coffee');
+  if (banner && sign && 'IntersectionObserver' in window) {
+    new IntersectionObserver(([e]) => sign.classList.toggle('show', !e.isIntersecting), { threshold: 0 }).observe(banner);
+  } else if (sign) sign.classList.add('show');
+  document.querySelectorAll('.copy-wallet').forEach((btn) => {
+    btn.onclick = () => copyTo(btn.parentElement.querySelector('.wallet').textContent, btn.parentElement.querySelector('.wallet-copied'));
+  });
 </script>
 </body>
 </html>

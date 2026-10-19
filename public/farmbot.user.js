@@ -313,7 +313,7 @@
       const energy = farm.today.energy;
       if (energy < 2) return `${empties.length} empty field(s), no energy`;
       const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
-      if (energy - 2 < reserve) return `${empties.length} empty field(s): keeping ${reserve} energy for today's meals, planting needs ${reserve + 2} (have ${energy}). Turn off "keep energy for meals" or buy energy.`;
+      if (energy - 2 < reserve) return `${empties.length} empty field(s): planting costs 2, but ${reserve} is kept for the animals' remaining meals today (2 per building per meal), so ${reserve + 2} is needed and you have ${energy}. Turn off "keep energy for meals" or buy energy.`;
       const choices = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties });
       if (!choices.length) {
         const proj = cfg.capAware !== false && h.cap ? Core.incomeProjection(farm, now, h) : null;
