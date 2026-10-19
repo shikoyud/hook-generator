@@ -12,10 +12,13 @@
   .top { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
   .langs button { background:transparent; color:var(--brown); border:1px solid var(--brown); padding:4px 10px; border-radius:6px; font-weight:600; }
   .langs button.on { background:var(--brown); color:#fff; }
-  .coffee { background:#fff; border:2px dashed var(--tan); border-radius:10px; padding:10px 14px; margin:8px 0 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .coffee b { color:var(--brown); }
-  .coffee code { font: 13px/1.4 ui-monospace, monospace; word-break: break-all; background:var(--soft); padding:4px 8px; border-radius:6px; }
+  .coffee { position:fixed; left:16px; bottom:16px; z-index:50; width:220px; background:#fff; border:2px dashed var(--tan); border-radius:12px; padding:12px 14px; box-shadow:0 6px 20px rgba(0,0,0,.18); display:flex; flex-direction:column; gap:8px; }
+  .coffee b { color:var(--brown); font-size:14px; }
+  .coffee code { display:block; font: 12px/1.4 ui-monospace, monospace; word-break: break-all; background:var(--soft); padding:6px 8px; border-radius:6px; }
+  .coffee .row { margin:0; }
   .coffee button { padding:6px 10px; }
+  @media (max-width: 720px) { .coffee { position:static; width:auto; margin:24px auto 0; max-width:780px; box-shadow:none; } }
+  main { padding-bottom: 48px; }
   h1 { font-size: 22px; margin: 0 0 4px; color: var(--brown); }
   .sub { color:#6b5d47; margin:0 0 16px; }
   .card { background:#fff; border:2px solid var(--brown); border-radius:10px; padding:16px; margin-bottom:16px; }
@@ -49,13 +52,6 @@
   <div class="top">
     <h1 data-i18n="title">Farming Season bot helper</h1>
     <div class="langs"><button data-lang="en">English</button><button data-lang="vi">Tiếng Việt</button></div>
-  </div>
-
-  <div class="coffee">
-    <b data-i18n="coffee">Buy me a coffee:</b>
-    <code id="wallet">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code>
-    <button class="secondary" id="copyWallet" data-i18n="copy">Copy</button>
-    <span id="walletCopied" class="hint"></span>
   </div>
 
   <p class="sub" data-i18n="intro">This page makes the one line the bot needs from the game file that <b>farmingseason.io</b> is serving right now, and explains how to set the bot up. New here? Start with <a href="#guide">the guide</a>.</p>
@@ -171,6 +167,15 @@
   </div>
 </main>
 
+<aside class="coffee" aria-label="Buy me a coffee">
+  <b data-i18n="coffee">Buy me a coffee ☕</b>
+  <code id="wallet" title="0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code>
+  <div class="row">
+    <button class="secondary" id="copyWallet" data-i18n="copy">Copy</button>
+    <span id="walletCopied" class="hint"></span>
+  </div>
+</aside>
+
 <script type="module">
   import { findNames, ORDER, WHAT } from './anchors.js';
 
@@ -199,7 +204,7 @@
     },
     vi: {
       title: 'Trợ lý bot Farming Season',
-      coffee: 'Mời mình ly cà phê:',
+      coffee: 'Mời mình ly cà phê ☕',
       copy: 'Sao chép',
       intro: 'Trang này tạo ra dòng lệnh duy nhất mà bot cần, lấy từ tệp game mà <b>farmingseason.io</b> đang phát hành ngay lúc này, và hướng dẫn cách cài bot. Mới dùng lần đầu? Hãy bắt đầu với <a href="#guide">phần hướng dẫn</a>.',
       genTitle: 'Dòng hook',
