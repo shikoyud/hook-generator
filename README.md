@@ -11,9 +11,9 @@ game with the browser's "Override content" feature, so nobody needs Node or serv
 1. Push this folder to a Git repository (GitHub, GitLab or Bitbucket).
 2. On vercel.com: **Add New → Project**, import the repository. No framework, no build command,
    output directory left empty. Deploy.
-3. Done. The site address Vercel gives you is also what the bot's **Help** button opens: the
-   userscript is served through a tiny function that stamps the deployment's own address into it,
-   so no configuration is needed. Any later domain you attach works the same way.
+3. Done. Production lives at **https://cubie.land**: the bot opens it on any error and uses it
+   for Tampermonkey updates. The userscript is served through a tiny function that stamps the
+   serving host into those links, so a preview deployment points at itself instead.
 
 Optional: the environment variable `GAME_ORIGIN` overrides the game site if it ever moves.
 

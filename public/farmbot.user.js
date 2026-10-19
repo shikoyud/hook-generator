@@ -5,9 +5,9 @@
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
-// @homepageURL  __HELP_URL__
-// @downloadURL  __HELP_URL__/farmbot.user.js
-// @updateURL    __HELP_URL__/farmbot.user.js
+// @homepageURL  https://cubie.land
+// @downloadURL  https://cubie.land/farmbot.user.js
+// @updateURL    https://cubie.land/farmbot.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -24,8 +24,9 @@
 
   const IS_NODE = typeof window === 'undefined';
   const SEC = 1000;
-  // Stamped by the helper site when it serves this file; empty when run from a local copy.
-  const HELP_URL = /^https?:/.test('__HELP_URL__') ? '__HELP_URL__' : '';
+  // The helper site (install guide, hook generator). The site stamps its own address in
+  // when it serves this file; a local copy falls back to the public one.
+  const HELP_URL = /^https?:/.test('__HELP_URL__') ? '__HELP_URL__' : 'https://cubie.land';
 
   // ------------------------------------------------------------------ CONFIG
   const CONFIG = {
@@ -44,6 +45,9 @@
     defaultCrop: null, // crop id used by 'auto' when a field has no history
     capAware: true, // stop planting cash crops once today's projected income reaches the cap
     mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
+    feedFirst: true, // grow wheat/corn for the silo until feed covers feedDaysAhead, then the plan's crop
+    feedDaysAhead: 1, // days of feed to keep in stock (bags + mixable grain)
+    mixFeed: true, // mix grain into bags automatically (costs no energy)
     // energy purchases (see Core.energyPlan)
     autoEnergy: false, // off until you turn it on in the panel
     energyMargin: 1.5, // a plant+harvest cycle must return at least this × its energy cost
@@ -154,6 +158,41 @@
       return Core.isBuilt(structure, now) && structure.collectDay !== Core.mealWindow(now, tzMin).slice(0, 10);
     },
 
+    // Feed plan: how much wheat and corn still has to be grown so that bags + mixable grain
+    // cover `feedDaysAhead` days of meals. Counts grain already growing in the fields.
+    // Returns null when the farm has no animals or no silo.
+    feedPlan(farm, now, h, cfg) {
+      if (!h.feedPerMeal || !farm.animals.length) return null;
+      const siloOk = !!(h.siloBuilt && h.siloBuilt(farm, now));
+      const dailyNeed = farm.animals.reduce((n, a) => n + 2 * h.feedPerMeal(a.kind), 0);
+      const silo = farm.silo || {};
+      const bags = silo.feed || 0, wheat = silo.wheat || 0, corn = silo.corn || 0;
+      const pairs = Math.min(wheat, corn);
+      const coverBags = bags + pairs * 10;
+      const target = dailyNeed * (cfg.feedDaysAhead ?? 1);
+      const mixes = Math.max(0, Math.ceil((target - coverBags) / 10));
+      let wheatNeed = Math.max(0, mixes - (wheat - pairs));
+      let cornNeed = Math.max(0, mixes - (corn - pairs));
+      let growingW = 0, growingC = 0;
+      for (const f of farm.fields) {
+        if (f.crop === 'wheat') growingW++;
+        else if (f.crop === 'corn') growingC++;
+      }
+      wheatNeed = Math.max(0, wheatNeed - growingW);
+      cornNeed = Math.max(0, cornNeed - growingC);
+      const capacityLeft = siloOk && h.siloCap ? h.siloCap(farm) - h.siloCount(farm) : Infinity;
+      let next = null;
+      if (siloOk && capacityLeft > 0 && (wheatNeed > 0 || cornNeed > 0)) {
+        next = wheatNeed > cornNeed ? 'wheat' : cornNeed > wheatNeed ? 'corn' : wheat + growingW <= corn + growingC ? 'wheat' : 'corn';
+      }
+      return {
+        siloOk, dailyNeed, bags, wheat, corn, pairs, coverBags, target,
+        daysCovered: dailyNeed ? coverBags / dailyNeed : Infinity,
+        mixes, wheatNeed, cornNeed, growingW, growingC, capacityLeft, next,
+        shouldMix: siloOk && pairs >= 1 && bags < target,
+      };
+    },
+
     siloCropChoice(farm) {
       const s = farm.silo || {};
       return (s.wheat || 0) <= (s.corn || 0) ? 'wheat' : 'corn';
@@ -261,9 +300,13 @@
         const c = h.crops.find((x) => x.id === cropId);
         return proj.total + (c ? h.hr(farm, c) : 0) <= proj.cap;
       };
+      const feed = cfg.feedFirst ? Core.feedPlan(farm, now, h, cfg) : null;
       for (const f of farm.fields) {
         if (!Core.isBuilt(f, now) || !free(`field:${f.id}`)) continue;
         if (h.or(f, now).state !== 'empty') continue;
+        if (feed && feed.next) {
+          return { job: { type: 'plant', fieldId: f.id, crop: feed.next }, key: `field:${f.id}`, why: `feed plan: need ${feed.wheatNeed} wheat, ${feed.cornNeed} corn` };
+        }
         let crop = Core.resolveCrop(f.id, plan, last, h.crops, cfg);
         if (!crop) continue;
         let why = plan[f.id] && plan[f.id] !== 'auto' ? 'plan' : 'auto';
@@ -568,6 +611,7 @@
     siloCount: (v) => isFn(v) && v.length === 1,
     siloCap: (v) => isFn(v) && v.length === 1,
     energyPrice: (v) => isFn(v) && v.length === 2,
+    feedPerMeal: (v) => isFn(v) && v.length === 1,
   };
   const describe = (v) => {
     if (v === null) return 'null';
@@ -630,6 +674,7 @@
     siloCount: G.siloCount,
     siloCap: G.siloCap,
     energyPrice: G.energyPrice,
+    feedPerMeal: G.feedPerMeal,
   });
 
   // ---------------------------------------------------------------- PLANNER
@@ -692,6 +737,19 @@
     lastProj: null,
     lastBuyAt: 0,
     lastEnergyPlan: null,
+    lastMixAt: 0,
+    lastFeed: null,
+    mixFeed(farm, now) {
+      const fp = G.feedPerMeal ? Core.feedPlan(farm, now, helpers(), cfg) : null;
+      this.lastFeed = fp;
+      if (!cfg.mixFeed || !fp || !fp.shouldMix) return;
+      if (now - this.lastMixAt < 60 * SEC) return;
+      this.lastMixAt = now;
+      // Same op as the silo's "Mix all" button. Costs no energy; not a farmer job.
+      const r = G.q.op('makeFeed', 'max');
+      if (r.ok) log(`Silo: mixed ${fp.pairs} wheat + ${fp.pairs} corn → +${fp.pairs * 10} bags.`, 'good');
+      else log(`Mixing refused: ${r.msg}`, 'bad');
+    },
     boughtDay: null,
     boughtToday: 0,
     buyEnergy(farm, now) {
@@ -743,6 +801,7 @@
       }
       const now = G.W.now();
       this.claimIncome(farm, now);
+      this.mixFeed(farm, now);
       this.buyEnergy(farm, now);
       this.lastProj = G.cap ? Core.incomeProjection(farm, now, helpers()) : null;
 
@@ -1208,7 +1267,7 @@
       if (this.tab === 'bot') this.renderBot();
       else if (this.tab === 'plan') {
         this.renderPlan();
-        this.plannerTimer = setInterval(() => this.tab === 'plan' && this.renderPlan(), 5000);
+        this.plannerTimer = setInterval(() => this.tab === 'plan' && !this.el.contains(document.activeElement) && this.renderPlan(), 5000);
       } else this.renderLog();
     },
     esc: (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
@@ -1308,7 +1367,25 @@ ${accrued == null ? '<p class="hint">passive function not in hook</p>' : row('Ac
         })
         .join('');
       const proj = G.cap ? Core.incomeProjection(farm, now, helpers()) : null;
+      const fp = G.feedPerMeal ? Core.feedPlan(farm, now, helpers(), cfg) : null;
+      const feedBox = !G.feedPerMeal
+        ? '<p class="hint">feed function not in hook: regenerate the hook line</p>'
+        : !fp
+          ? '<p class="hint">No animals yet.</p>'
+          : `<div class="row"><span>Animals eat</span><span>${fp.dailyNeed} bags/day</span></div>
+<div class="row"><span>Feed bags</span><span class="${fp.bags < fp.dailyNeed ? 'bad' : 'good'}">${fp.bags} (${fp.daysCovered === Infinity ? '∞' : fp.daysCovered.toFixed(1)} days with grain)</span></div>
+<div class="row"><span>Grain in silo</span><span>${fp.wheat} wheat · ${fp.corn} corn → ${fp.pairs * 10} bags mixable</span></div>
+<div class="row"><span>Growing now</span><span>${fp.growingW} wheat · ${fp.growingC} corn fields</span></div>
+<div class="row"><span>Still to grow for ${cfg.feedDaysAhead} day(s)</span><span class="${fp.wheatNeed + fp.cornNeed ? '' : 'good'}">${fp.wheatNeed} wheat · ${fp.cornNeed} corn</span></div>
+<div class="row"><span>Next empty field</span><span>${!fp.siloOk ? 'no silo built' : fp.next ? `<b>${fp.next}</b> (feed first)` : "your plan's crop (feed covered)"}</span></div>`;
       b.innerHTML = `
+<h4>Feed for the animals</h4>
+<div class="ctl"><label class="tg"><input type="checkbox" data-c="feedFirst" ${cfg.feedFirst ? 'checked' : ''}> feed first</label>
+<label class="tg">keep <input type="number" min="0.5" max="7" step="0.5" value="${cfg.feedDaysAhead}" data-n="feedDaysAhead" style="width:52px"> day(s) of feed</label>
+<label class="tg"><input type="checkbox" data-c="mixFeed" ${cfg.mixFeed ? 'checked' : ''}> auto-mix bags</label></div>
+${feedBox}
+<p class="hint">With "feed first" on, every empty field grows wheat or corn (whichever is shorter) until bags plus mixable grain cover the days above, counting fields already growing grain. After that the field gets the crop you chose below. Grain never counts against the harvest cap.</p>
+<h4>Crop plan</h4>
 <div class="ctl"><span class="hint">Fill all:</span>
 <button class="btn sm" data-s="perHour">Best /h</button><button class="btn sm" data-s="perHarvest">Best /harvest</button>
 <button class="btn sm" data-s="wheat">Wheat</button><button class="btn sm" data-s="corn">Corn</button>
@@ -1317,6 +1394,25 @@ ${proj ? `<p class="hint">Cap today ${Math.round(proj.cap).toLocaleString()} · 
 ${farm.fields.length ? `<svg width="${Math.min(360, w)}" height="${h}" viewBox="0 0 ${w} ${h}">${tiles}</svg>` : '<p class="hint">No fields yet.</p>'}
 <table><thead><tr><th>#</th><th>x,y</th><th>Now</th><th>Last</th><th>Plant</th></tr></thead><tbody>${rows}</tbody></table>
 <p class="hint">Value = this farm's harvest price per crop (before the daily cap). Quick crops earn more per hour, slow crops more per harvest. Silo crops feed animals and are never capped.</p>`;
+      b.querySelectorAll('[data-c]').forEach((i) => {
+        i.onchange = () => {
+          cfg[i.dataset.c] = i.checked;
+          saveCfg();
+          log(`${i.dataset.c}: ${i.checked ? 'on' : 'off'}`);
+          this.renderPlan();
+        };
+      });
+      b.querySelectorAll('[data-n]').forEach((i) => {
+        i.onchange = () => {
+          const v = Number(i.value);
+          if (Number.isFinite(v) && v > 0) {
+            cfg[i.dataset.n] = v;
+            saveCfg();
+            log(`${i.dataset.n}: ${v}`);
+            this.renderPlan();
+          }
+        };
+      });
       b.querySelectorAll('select[data-f]').forEach((s) => {
         s.onchange = () => {
           Planner.set(s.dataset.f, s.value);

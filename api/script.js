@@ -13,7 +13,8 @@ export default function handler(req, res) {
   const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0];
   const host = req.headers['x-forwarded-host'] || req.headers.host || '';
   const site = host ? `${proto}://${host}` : '';
-  const body = cached.replace(/__HELP_URL__/g, site);
+  // Point the help links at whichever host serves this copy (production is https://cubie.land).
+  const body = site ? cached.replace(/__HELP_URL__/g, site).replace(/https:\/\/cubie\.land/g, site) : cached.replace(/__HELP_URL__/g, 'https://cubie.land');
   res.setHeader('content-type', 'text/javascript; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
   res.status(200).send(body);
