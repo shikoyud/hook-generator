@@ -7,7 +7,7 @@ const esc = (s) => s.replace(/\$/g, '\\$');
 
 export const ORDER = [
   'q', 'U', 'Ca', 'Pg', 'jf', 'W', 'or', 'wr', 'Or', 'te', 'hr', 'de', 'je', 'Ae', 'Fe',
-  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal',
+  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap',
 ];
 
 export const WHAT = {
@@ -35,6 +35,7 @@ export const WHAT = {
   siloCap: 'silo capacity',
   energyPrice: 'token price of n energy',
   feedPerMeal: 'feed bags one animal eats per meal',
+  battleCap: 'daily arena loot cap',
 };
 
 /**
@@ -93,6 +94,9 @@ export function findNames(src) {
 
   // feedPerMeal: `hi=e=>e.animals.reduce((e,t)=>e+j(t.kind)*2,0)`
   names.feedPerMeal = find('feedPerMeal', new RegExp(`e\\.animals\\.reduce\\(\\(e,t\\)=>e\\+(${ID})\\(t\\.kind\\)\\*2,0\\)`));
+
+  // battleCap: `Ri=e=>Math.max(0,Ii(e)-(e.today.battleEarned??0))` -> Ii
+  names.battleCap = find('battleCap', new RegExp(`e=>Math\\.max\\(0,(${ID})\\(e\\)-\\(e\\.today\\.battleEarned\\?\\?0\\)\\)`));
 
   for (const k of ORDER) if (!names[k]) names[k] = null;
   const found = ORDER.filter((k) => names[k]);

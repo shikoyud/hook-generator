@@ -759,6 +759,7 @@
     siloCap: (v) => isFn(v) && v.length === 1,
     energyPrice: (v) => isFn(v) && v.length === 2,
     feedPerMeal: (v) => isFn(v) && v.length === 1,
+    battleCap: (v) => isFn(v) && v.length === 1,
   };
   const describe = (v) => {
     if (v === null) return 'null';
@@ -822,6 +823,7 @@
     siloCap: G.siloCap,
     energyPrice: G.energyPrice,
     feedPerMeal: G.feedPerMeal,
+    battleCap: G.battleCap,
   });
 
   // ---------------------------------------------------------------- PLANNER
@@ -1061,6 +1063,10 @@
     blockReason(farm) {
       if (this.stopRequested) return 'stop requested';
       if (this.capDay === this.today()) return 'loot cap reached today';
+      if (G.battleCap) {
+        const cap = G.battleCap(farm), earned = farm.today.battleEarned ?? 0;
+        if (cap > 0 && earned >= cap) return `loot cap reached today (${Math.round(earned)}/${Math.round(cap)})`;
+      }
       if (farm.today.energy < 5) return `energy ${farm.today.energy} < 5`;
       if (document.hidden) return 'tab hidden (game pauses battles)';
       return null;
@@ -1521,9 +1527,9 @@
       const energyLine = !farm ? 'waiting for your farm…' : G.energyPrice ? (cfg.autoEnergy ? (Farm.lastEnergyPlan ? (Farm.lastEnergyPlan.buy ? `next: buy ${Farm.lastEnergyPlan.buy} (${Farm.lastEnergyPlan.reason})` : Farm.lastEnergyPlan.reason) : 'waiting for first tick') : 'auto-buy off') : 'price function not in hook';
       b.innerHTML = `
 <div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
-${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : '<button class="btn battle" data-a="battle">Battle</button>'}</div>
+${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : (() => { const why = farm ? Battle.blockReason(farm) : null; return `<button class="btn battle" data-a="battle" ${why ? 'disabled title="' + this.esc(why) + '"' : ''}>Battle</button>${why ? `<span class="hint bad">${this.esc(why)}</span>` : ''}`; })()}</div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
-${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : this.esc(farm ? (Battle.blockReason(farm) ? `off (${Battle.blockReason(farm)})` : 'off · press Battle') : 'off'), Battle.engaged ? 'good' : '')}
+${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : farm && G.battleCap ? `off · loot today ${Math.round(farm.today.battleEarned ?? 0)} / ${Math.round(G.battleCap(farm))}` : 'off', Battle.engaged ? 'good' : '')}
 ${row('Energy', farm ? `${farm.today.energy}${d && d.energy ? ` · meals still need ${d.energy}` : ''}` : '–')}
 ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}${stats.flags ? ` · <b class="bad">${stats.flags} flag(s)</b>` : ''}`, G.Ca.blocked || stats.flags ? 'bad' : '')}
 ${row('Pace', `${live.perMin}/${live.allowed} per min · variation ${ratio}`, live.perMin > live.allowed * cfg.budgetFraction || (isFinite(live.ratio) && live.ratio < cfg.minCv) ? 'bad' : '')}
@@ -1544,7 +1550,7 @@ ${cb('energyForCycles', 'extra crop cycles', 'Cycles that fit under today\'s cap
 ${cb('energyForBattle', 'battle runs', 'Between runs, 5 more while the loot cap is open and the last run paid off.', !cfg.autoEnergy)}</div>
 <div class="ctl">${cb('energyTopUp', 'buy ahead for the cycles of the day', 'Off: buy just the shortfall, rounded up to the minimum (10). On: when a purchase happens, also cover the crop cycles that still fit under the cap today, so buys are bigger and rarer.', !cfg.autoEnergy)}</div>
 ${row('Plan', this.esc(energyLine), cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '')}
-${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens each`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% wallet · margin ${cfg.energyMargin}×`) : ''}`)}
+${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens each`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Amount', cfg.energyTopUp ? `shortfall + cycles ahead, ${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy` : `the shortfall, rounded up to ${cfg.energyMinBuy} (max ${cfg.energyMaxBuy})`) + row('Limits', `${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% of wallet · cycles need ${cfg.energyMargin}× their cost`) : ''}`)}
 
 ${sec('cap', `Harvest cap today${proj ? ` · ${n(proj.total)} / ${n(proj.cap)}` : ''}`, !farm ? '<p class="hint">waiting for your farm…</p>' : proj ? row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Room for cash crops', proj.total >= proj.cap ? 'none: silo crops only' : n(proj.room), proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>')}
 
