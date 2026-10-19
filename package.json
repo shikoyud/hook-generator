@@ -1,0 +1,14 @@
+{
+  "name": "fs-hook-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generates the window.__fs hook line for the Farming Season test bot from the live game bundle.",
+  "scripts": {
+    "test": "node --test test/",
+    "cli": "node cli.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

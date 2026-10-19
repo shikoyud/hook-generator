@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/generate.js": { "maxDuration": 30 }
+  },
+  "rewrites": [
+    { "source": "/farmbot.user.js", "destination": "/api/script" }
+  ]
+}

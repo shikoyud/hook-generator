@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farming Season bot helper</title>
+<style>
+  :root { --bg:#fbf7ea; --ink:#1d2a1a; --brown:#5a4631; --tan:#8a6d4a; --green:#2f7d3a; --red:#b3261e; --line:#d8cfb8; --soft:#f4efe0; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width: 780px; margin: 0 auto; padding: 16px 16px 48px; }
+  .top { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+  .langs button { background:transparent; color:var(--brown); border:1px solid var(--brown); padding:4px 10px; border-radius:6px; font-weight:600; }
+  .langs button.on { background:var(--brown); color:#fff; }
+  .coffee { background:#fff; border:2px dashed var(--tan); border-radius:10px; padding:10px 14px; margin:8px 0 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .coffee b { color:var(--brown); }
+  .coffee code { font: 13px/1.4 ui-monospace, monospace; word-break: break-all; background:var(--soft); padding:4px 8px; border-radius:6px; }
+  .coffee button { padding:6px 10px; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: var(--brown); }
+  .sub { color:#6b5d47; margin:0 0 16px; }
+  .card { background:#fff; border:2px solid var(--brown); border-radius:10px; padding:16px; margin-bottom:16px; }
+  textarea { width:100%; font: 13px/1.4 ui-monospace, monospace; min-height: 72px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; }
+  input[type=url] { width:100%; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  button { font:inherit; font-weight:600; border:0; border-radius:8px; padding:10px 16px; cursor:pointer; color:#fff; background:var(--green); }
+  button.secondary { background:var(--tan); }
+  button.big { font-size:17px; padding:12px 22px; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .out { display:none; } .out.show { display:block; }
+  .line { font: 14px/1.5 ui-monospace, monospace; background:var(--soft); border:1px dashed var(--brown); border-radius:6px; padding:10px; word-break:break-all; }
+  .ok { color:var(--green); } .bad { color:var(--red); }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:10px; }
+  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.miss { color:var(--red); font-weight:600; }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--brown); font-weight:600; }
+  ol, ul { padding-left: 20px; } li { margin: 5px 0; }
+  code, kbd { background:var(--soft); padding:1px 5px; border-radius:4px; font-family: ui-monospace, monospace; font-size: 13px; }
+  kbd { border:1px solid var(--line); }
+  .hint { color:#6b5d47; font-size:13px; }
+  h2 { font-size: 20px; color: var(--brown); margin: 32px 0 12px; }
+  h3 { font-size: 16px; margin: 0 0 8px; color: var(--brown); }
+  .card p { margin: 8px 0; }
+  .warn { background:#fff3c4; border-left:4px solid #d9a400; padding:8px 10px; border-radius:4px; }
+  .step img { max-width:100%; border:1px solid var(--line); border-radius:6px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1 data-i18n="title">Farming Season bot helper</h1>
+    <div class="langs"><button data-lang="en">English</button><button data-lang="vi">Tiếng Việt</button></div>
+  </div>
+
+  <div class="coffee">
+    <b data-i18n="coffee">Buy me a coffee:</b>
+    <code id="wallet">0xcb10fb2a956dfa1f2b2c2c415eca2c13eaf7f067</code>
+    <button class="secondary" id="copyWallet" data-i18n="copy">Copy</button>
+    <span id="walletCopied" class="hint"></span>
+  </div>
+
+  <p class="sub" data-i18n="intro">This page makes the one line the bot needs from the game file that <b>farmingseason.io</b> is serving right now, and explains how to set the bot up. New here? Start with <a href="#guide">the guide</a>.</p>
+
+  <div class="card">
+    <h3 data-i18n="genTitle">Hook line</h3>
+    <p class="hint" data-i18n="genHint">Reads the current <code>game-xxxx.js</code> from farmingseason.io. Press the button again after every game update.</p>
+    <div class="row">
+      <button id="gen" class="big" data-i18n="generate">Generate</button>
+      <span id="status" class="hint"></span>
+    </div>
+    <details>
+      <summary data-i18n="advanced">Advanced: direct link to a bundle</summary>
+      <input id="bundle" type="url" placeholder="https://farmingseason.io/assets/game-xxxx.js" autocomplete="off">
+      <p class="hint" data-i18n="advancedHint">Only needed if the automatic lookup fails. Leave empty normally.</p>
+    </details>
+  </div>
+
+  <div id="out" class="card out">
+    <div id="summary"></div>
+    <div class="line" id="line"></div>
+    <div class="row">
+      <button id="copy" class="secondary" data-i18n="copyLine">Copy line</button>
+      <span id="copied" class="hint"></span>
+    </div>
+    <p class="hint" data-i18n="afterCopy">Now follow <a href="#step2">step 2 of the guide</a> to put it into the game.</p>
+    <details>
+      <summary data-i18n="names">Resolved names</summary>
+      <table><tbody id="names"></tbody></table>
+    </details>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary data-i18n="offline">Offline fallback: use a file you already have</summary>
+      <p class="hint" data-i18n="offlineHint">If the lookup above fails, choose or paste the whole <code>game-xxxx.js</code> content here. Nothing is uploaded; it runs in your browser.</p>
+      <input type="file" id="file" accept=".js,text/javascript">
+      <textarea id="paste" placeholder="game-xxxx.js"></textarea>
+      <div class="row"><button id="genLocal" class="secondary" data-i18n="genLocal">Generate from this file</button></div>
+    </details>
+  </div>
+
+  <h2 id="guide" data-i18n="guide">How to use the bot</h2>
+
+  <div class="card">
+    <h3 data-i18n="s1">1. Install the bot</h3>
+    <ol data-i18n="s1list">
+      <li>Use <b>Chrome</b>, <b>Edge</b> or <b>Brave</b>. Step 2 needs a feature Firefox does not have.</li>
+      <li>Install the <b>Tampermonkey</b> extension from your browser's web store.</li>
+      <li>Click <a href="/farmbot.user.js">farmbot.user.js</a>. Tampermonkey opens an install screen; press <b>Install</b>.</li>
+      <li>In Chrome, open <code>chrome://extensions</code>, open Tampermonkey's <b>Details</b> and turn on <b>Allow User Scripts</b> (older versions: <b>Developer mode</b>). Without this, Tampermonkey cannot run scripts.</li>
+    </ol>
+  </div>
+
+  <div class="card" id="step2">
+    <h3 data-i18n="s2">2. Put the hook line into the game (no server access needed)</h3>
+    <p data-i18n="s2intro">The bot needs one line added to the end of the game's code. You do that with the browser's built-in <b>Override content</b> feature: the browser keeps your edited copy of the file and uses it instead of the original, only on your computer.</p>
+    <ol data-i18n="s2list">
+      <li>Press <b>Generate</b> at the top of this page and copy the line.</li>
+      <li>Open <a href="https://farmingseason.io/" target="_blank" rel="noopener">farmingseason.io</a> in another tab and press <kbd>F12</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>) to open DevTools.</li>
+      <li>Click the <b>Sources</b> tab at the top of DevTools. If you do not see it, click the <b>»</b> button to find it.</li>
+      <li>In the left panel, under <b>Page</b>, expand <b>farmingseason.io</b>, then <b>assets</b>. Click the file whose name starts with <b>game-</b>. It should be the same name this page showed after Generate.</li>
+      <li><b>Right-click</b> on the file's content and choose <b>Override content</b>.</li>
+      <li>The first time, Chrome asks for a folder to keep overrides in: create a new empty folder anywhere (for example <code>Documents\fs-override</code>), select it, then click <b>Allow</b> on the yellow bar that appears at the top of DevTools.</li>
+      <li>The file is now editable. Click inside it, press <kbd>Ctrl</kbd>+<kbd>End</kbd> to jump to the very end, press <kbd>Enter</kbd> to start a new last line, and paste the hook line. Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save. A small purple dot on the file icon means the override is active.</li>
+      <li>Reload the game with <kbd>F5</kbd>, <b>keeping DevTools open</b>. The bot panel appears at the bottom right and its log says <i>Ready. Hook found.</i></li>
+    </ol>
+    <p class="warn" data-i18n="s2warn"><b>Important:</b> overrides only work while DevTools is open. If you close DevTools, the game loads the original file and the bot reports that the hook is missing. You can drag DevTools to a separate window or make it small, but keep it open while the bot runs.</p>
+    <p class="hint" data-i18n="s2update">After a game update the file gets a new name and your old override no longer matches. Press Generate again and repeat these steps with the new file. The bot tells you when this happens.</p>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="s3">3. Run it</h3>
+    <ol data-i18n="s3list">
+      <li>Sign in and open your farm as usual.</li>
+      <li>In the <b>Planner</b> tab of the bot panel, choose what each field should grow. The dropdown shows grow time, value and value per hour. Use the <b>Fill all</b> buttons for a quick start, or leave fields on <b>Auto</b> to replant whatever was there last.</li>
+      <li>In the <b>Bot</b> tab press <b>Start</b>. Leave the tab open and visible.</li>
+    </ol>
+    <p data-i18n="s3does">On its own, each round, the bot: feeds hungry animals (closest to starving first), collects products, harvests ready fields, picks ripe orchard fruit, plants empty fields from your plan, collects village income, and when nothing is left and energy allows, fights in the arena.</p>
+    <p data-i18n="s3toggles">Toggles in the Bot tab:</p>
+    <ul data-i18n="s3togglelist">
+      <li><b>battle</b>: enter the arena when the farm is idle. It retreats when the daily loot cap is full or at the configured wave, and fights again while energy lasts.</li>
+      <li><b>village income</b>: collect town-hall income automatically (every 30 minutes once at least 1 token has accrued).</li>
+      <li><b>cap-aware planting</b>: crops, fruit and animal products share one daily harvest cap. With this on, the bot plants a cash crop only if its value still fits under today's cap, counting what animals and the orchard will already bring. Once the cap is reached it plants wheat or corn for the silo instead. Silo crops are never capped.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="s4">4. Good to know</h3>
+    <ul data-i18n="s4list">
+      <li><b>Energy.</b> Every job costs 2 energy and a battle 5. The bot always keeps enough energy for today's remaining animal meals before planting or fighting, so animals never starve because of it.</li>
+      <li><b>The human check.</b> The game sometimes shows a "are you a real farmer" box. The bot pauses the moment it appears and never touches it. Tick the box yourself; the bot resumes by itself.</li>
+      <li><b>Pace.</b> The bot does roughly one job every 3 to 8 seconds with random pauses, well inside the game's limits, and shows its current jobs per minute in the Bot tab. It is not meant to be fast.</li>
+      <li><b>Battle.</b> Keep the browser tab visible during a fight: the game pauses runs in hidden tabs. The bot moves, dodges and picks perks for you, including dodging the Rat King's mortar strikes.</li>
+      <li><b>Stopping.</b> Press <b>Stop</b> in the panel, or close the tab. Settings and your crop plan are kept in the browser for next time.</li>
+      <li><b>Help.</b> If something goes wrong, the panel shows a <b>Help</b> button that opens this page.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="s5">Troubleshooting</h3>
+    <table data-i18n="s5table">
+      <tr><th>You see</th><th>Do this</th></tr>
+      <tr><td>No panel at all</td><td>Tampermonkey is off for this site, "Allow User Scripts" is not enabled, or the script was not installed.</td></tr>
+      <tr><td>"window.__fs not found"</td><td>The hook line is not in the file the game loaded. Usually DevTools was closed. Open it, check the purple dot on the file, reload.</td></tr>
+      <tr><td>"these entries point at the wrong thing"</td><td>The game updated after you made the override. Press Generate, then redo step 2 with the new file.</td></tr>
+      <tr><td>Status "holding: rate" or "holding: regular"</td><td>Normal. The bot is spacing its jobs to stay under the game's limits.</td></tr>
+      <tr><td>Status "paused: human check"</td><td>Solve the check box in the game. The bot continues on its own.</td></tr>
+      <tr><td>A field row is red in the Planner</td><td>The game refused that crop (locked, or not available). The field falls back to Auto; pick another crop.</td></tr>
+      <tr><td>"Refused plant/harvest… skipping for 60s"</td><td>Usually out of energy or the farmer is building. It retries by itself.</td></tr>
+    </table>
+  </div>
+</main>
+
+<script type="module">
+  import { findNames, ORDER, WHAT } from './anchors.js';
+
+  // ------------------------------------------------------------ translations
+  const T = {
+    en: {
+      // dynamic strings
+      fetching: 'Reading the current game file…',
+      done: 'Done.',
+      doneMissing: 'Done, but some names were not found.',
+      fail: 'Could not read the game file',
+      tryOffline: 'try the offline fallback below.',
+      notBundle: 'That does not look like the game file.',
+      localDone: 'Generated from your file.',
+      copied: 'Copied.',
+      copyManual: 'Select the text and copy it manually.',
+      bundle: 'Game file',
+      pasted: 'pasted file',
+      allOk: 'All 22 names resolved.',
+      someMissing: (n) => `${n} name(s) not found: the game code changed around them. The line below is partial.`,
+      already: 'This file already contains a window.__fs line.',
+      notFound: 'not found',
+    },
+    vi: {
+      title: 'Trợ lý bot Farming Season',
+      coffee: 'Mời mình ly cà phê:',
+      copy: 'Sao chép',
+      intro: 'Trang này tạo ra dòng lệnh duy nhất mà bot cần, lấy từ tệp game mà <b>farmingseason.io</b> đang phát hành ngay lúc này, và hướng dẫn cách cài bot. Mới dùng lần đầu? Hãy bắt đầu với <a href="#guide">phần hướng dẫn</a>.',
+      genTitle: 'Dòng hook',
+      genHint: 'Đọc tệp <code>game-xxxx.js</code> hiện tại từ farmingseason.io. Bấm lại nút này sau mỗi lần game cập nhật.',
+      generate: 'Tạo dòng hook',
+      advanced: 'Nâng cao: liên kết trực tiếp đến tệp game',
+      advancedHint: 'Chỉ cần khi tra cứu tự động thất bại. Bình thường để trống.',
+      copyLine: 'Sao chép dòng',
+      afterCopy: 'Bây giờ làm theo <a href="#step2">bước 2 trong hướng dẫn</a> để đưa dòng này vào game.',
+      names: 'Các tên đã tìm được',
+      offline: 'Dự phòng ngoại tuyến: dùng tệp bạn đã có sẵn',
+      offlineHint: 'Nếu bước tra cứu ở trên thất bại, hãy chọn hoặc dán toàn bộ nội dung tệp <code>game-xxxx.js</code> vào đây. Không có gì được tải lên; mọi thứ chạy ngay trong trình duyệt của bạn.',
+      genLocal: 'Tạo từ tệp này',
+      guide: 'Cách dùng bot',
+      s1: '1. Cài đặt bot',
+      s1list: `<li>Dùng <b>Chrome</b>, <b>Edge</b> hoặc <b>Brave</b>. Bước 2 cần một tính năng mà Firefox không có.</li>
+<li>Cài tiện ích <b>Tampermonkey</b> từ cửa hàng tiện ích của trình duyệt.</li>
+<li>Bấm vào <a href="/farmbot.user.js">farmbot.user.js</a>. Tampermonkey sẽ mở màn hình cài đặt; bấm <b>Install</b> (Cài đặt).</li>
+<li>Trên Chrome, mở <code>chrome://extensions</code>, vào <b>Details</b> (Chi tiết) của Tampermonkey và bật <b>Allow User Scripts</b> (bản cũ hơn: <b>Developer mode</b>). Không bật thì Tampermonkey không chạy được script.</li>`,
+      s2: '2. Đưa dòng hook vào game (không cần quyền truy cập máy chủ)',
+      s2intro: 'Bot cần thêm một dòng vào cuối mã nguồn của game. Bạn làm việc này bằng tính năng có sẵn của trình duyệt tên là <b>Override content</b> (Ghi đè nội dung): trình duyệt sẽ giữ bản sao đã chỉnh sửa của tệp và dùng nó thay cho bản gốc, chỉ trên máy của bạn.',
+      s2list: `<li>Bấm <b>Tạo dòng hook</b> ở đầu trang này và sao chép dòng đó.</li>
+<li>Mở <a href="https://farmingseason.io/" target="_blank" rel="noopener">farmingseason.io</a> ở một thẻ khác và nhấn <kbd>F12</kbd> (hoặc <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>) để mở DevTools.</li>
+<li>Bấm thẻ <b>Sources</b> ở phía trên DevTools. Nếu không thấy, bấm nút <b>»</b> để tìm.</li>
+<li>Ở khung bên trái, dưới mục <b>Page</b>, mở rộng <b>farmingseason.io</b>, rồi <b>assets</b>. Bấm vào tệp có tên bắt đầu bằng <b>game-</b>. Tên này phải trùng với tên mà trang này hiển thị sau khi bạn bấm Tạo.</li>
+<li><b>Chuột phải</b> vào phần nội dung của tệp và chọn <b>Override content</b>.</li>
+<li>Lần đầu, Chrome sẽ hỏi một thư mục để lưu các bản ghi đè: tạo một thư mục trống mới ở bất kỳ đâu (ví dụ <code>Documents\\fs-override</code>), chọn nó, rồi bấm <b>Allow</b> (Cho phép) trên thanh màu vàng xuất hiện ở đầu DevTools.</li>
+<li>Giờ tệp đã chỉnh sửa được. Bấm vào trong tệp, nhấn <kbd>Ctrl</kbd>+<kbd>End</kbd> để nhảy xuống cuối cùng, nhấn <kbd>Enter</kbd> để tạo một dòng cuối mới, rồi dán dòng hook vào. Nhấn <kbd>Ctrl</kbd>+<kbd>S</kbd> để lưu. Một chấm tím nhỏ trên biểu tượng tệp nghĩa là ghi đè đã có hiệu lực.</li>
+<li>Tải lại game bằng <kbd>F5</kbd>, <b>vẫn giữ DevTools mở</b>. Bảng điều khiển của bot sẽ hiện ở góc dưới bên phải và nhật ký ghi <i>Ready. Hook found.</i></li>`,
+      s2warn: '<b>Quan trọng:</b> ghi đè chỉ hoạt động khi DevTools đang mở. Nếu bạn đóng DevTools, game sẽ tải tệp gốc và bot báo thiếu hook. Bạn có thể kéo DevTools ra cửa sổ riêng hoặc thu nhỏ nó, nhưng phải giữ nó mở trong lúc bot chạy.',
+      s2update: 'Sau mỗi lần game cập nhật, tệp sẽ có tên mới và bản ghi đè cũ không còn khớp nữa. Bấm Tạo dòng hook lại và lặp lại các bước này với tệp mới. Bot sẽ báo cho bạn khi điều này xảy ra.',
+      s3: '3. Chạy bot',
+      s3list: `<li>Đăng nhập và mở nông trại như bình thường.</li>
+<li>Trong thẻ <b>Planner</b> của bảng bot, chọn cây trồng cho từng thửa ruộng. Danh sách hiển thị thời gian lớn, giá trị và giá trị mỗi giờ. Dùng các nút <b>Fill all</b> để bắt đầu nhanh, hoặc để <b>Auto</b> để trồng lại loại cây vừa thu hoạch.</li>
+<li>Trong thẻ <b>Bot</b> bấm <b>Start</b>. Giữ thẻ trình duyệt mở và hiển thị.</li>`,
+      s3does: 'Mỗi vòng, bot tự làm theo thứ tự: cho thú đói ăn (con sắp chết đói trước), thu sản phẩm, thu hoạch ruộng đã chín, hái quả chín trong vườn, trồng lại ruộng trống theo kế hoạch của bạn, thu thu nhập làng, và khi không còn việc gì mà vẫn đủ năng lượng thì đi đánh đấu trường.',
+      s3toggles: 'Các công tắc trong thẻ Bot:',
+      s3togglelist: `<li><b>battle</b>: vào đấu trường khi nông trại rảnh. Bot rút lui khi đã đầy giới hạn chiến lợi phẩm trong ngày hoặc đến đợt (wave) đã cài, và đánh tiếp khi còn năng lượng.</li>
+<li><b>village income</b>: tự thu thu nhập từ tòa thị chính (mỗi 30 phút, khi đã tích đủ ít nhất 1 token).</li>
+<li><b>cap-aware planting</b>: cây trồng, quả và sản phẩm từ thú dùng chung một giới hạn thu hoạch mỗi ngày. Khi bật, bot chỉ trồng cây bán tiền nếu giá trị của nó còn vừa trong giới hạn hôm nay, có tính cả phần thú và vườn cây sẽ mang lại. Khi đã chạm giới hạn, bot chuyển sang trồng lúa mì hoặc ngô cho kho ủ (silo). Cây cho silo không bao giờ bị giới hạn.</li>`,
+      s4: '4. Những điều nên biết',
+      s4list: `<li><b>Năng lượng.</b> Mỗi việc tốn 2 năng lượng, một trận đánh tốn 5. Bot luôn giữ đủ năng lượng cho các bữa ăn còn lại trong ngày của thú trước khi trồng hay đánh, nên thú không bao giờ bị đói vì bot.</li>
+<li><b>Kiểm tra người thật.</b> Thỉnh thoảng game hiện hộp "bạn có phải nông dân thật không". Bot dừng ngay khi hộp xuất hiện và không bao giờ chạm vào nó. Bạn tự tích vào ô; bot sẽ tự chạy tiếp.</li>
+<li><b>Nhịp độ.</b> Bot làm khoảng một việc mỗi 3 đến 8 giây kèm những quãng nghỉ ngẫu nhiên, nằm sâu trong giới hạn của game, và hiển thị số việc mỗi phút trong thẻ Bot. Bot không được thiết kế để chạy nhanh.</li>
+<li><b>Đánh đấu trường.</b> Giữ thẻ trình duyệt hiển thị trong lúc đánh: game tạm dừng trận khi thẻ bị ẩn. Bot tự di chuyển, né đòn và chọn perk cho bạn, kể cả né pháo cối của Vua Chuột.</li>
+<li><b>Dừng.</b> Bấm <b>Stop</b> trong bảng, hoặc đóng thẻ. Cài đặt và kế hoạch trồng trọt được lưu trong trình duyệt cho lần sau.</li>
+<li><b>Trợ giúp.</b> Nếu có lỗi, bảng bot hiện nút <b>Help</b> mở lại trang này.</li>`,
+      s5: 'Xử lý sự cố',
+      s5table: `<tr><th>Bạn thấy</th><th>Hãy làm</th></tr>
+<tr><td>Không có bảng bot</td><td>Tampermonkey đang tắt cho trang này, chưa bật "Allow User Scripts", hoặc script chưa được cài.</td></tr>
+<tr><td>"window.__fs not found"</td><td>Dòng hook không có trong tệp mà game đã tải. Thường là do DevTools đã bị đóng. Mở lại, kiểm tra chấm tím trên tệp, tải lại trang.</td></tr>
+<tr><td>"these entries point at the wrong thing"</td><td>Game đã cập nhật sau khi bạn tạo bản ghi đè. Bấm Tạo dòng hook, rồi làm lại bước 2 với tệp mới.</td></tr>
+<tr><td>Trạng thái "holding: rate" hoặc "holding: regular"</td><td>Bình thường. Bot đang giãn cách các việc để ở dưới giới hạn của game.</td></tr>
+<tr><td>Trạng thái "paused: human check"</td><td>Giải hộp kiểm tra trong game. Bot sẽ tự tiếp tục.</td></tr>
+<tr><td>Một dòng ruộng màu đỏ trong Planner</td><td>Game từ chối loại cây đó (chưa mở khóa hoặc không có). Ruộng chuyển về Auto; hãy chọn cây khác.</td></tr>
+<tr><td>"Refused plant/harvest… skipping for 60s"</td><td>Thường là hết năng lượng hoặc nông dân đang xây dựng. Bot sẽ tự thử lại.</td></tr>`,
+      // dynamic strings
+      fetching: 'Đang đọc tệp game hiện tại…',
+      done: 'Xong.',
+      doneMissing: 'Xong, nhưng một số tên không tìm thấy.',
+      fail: 'Không đọc được tệp game',
+      tryOffline: 'hãy thử phần dự phòng ngoại tuyến bên dưới.',
+      notBundle: 'Nội dung này không giống tệp game.',
+      localDone: 'Đã tạo từ tệp của bạn.',
+      copied: 'Đã sao chép.',
+      copyManual: 'Hãy bôi đen và sao chép thủ công.',
+      bundle: 'Tệp game',
+      pasted: 'tệp đã dán',
+      allOk: 'Đã tìm được đủ 22 tên.',
+      someMissing: (n) => `${n} tên không tìm thấy: mã game đã thay đổi quanh chúng. Dòng bên dưới chưa đầy đủ.`,
+      already: 'Tệp này đã có sẵn một dòng window.__fs.',
+      notFound: 'không tìm thấy',
+    },
+  };
+  // English page text is the HTML itself; remember it so we can switch back.
+  const EN_HTML = {};
+  document.querySelectorAll('[data-i18n]').forEach((el) => (EN_HTML[el.dataset.i18n] = el.innerHTML));
+
+  let lang = 'en';
+  const t = (k, ...a) => {
+    const v = (T[lang] && T[lang][k]) ?? T.en[k];
+    return typeof v === 'function' ? v(...a) : v;
+  };
+  function setLang(l) {
+    lang = T[l] ? l : 'en';
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const k = el.dataset.i18n;
+      el.innerHTML = lang === 'en' ? EN_HTML[k] : (T.vi[k] ?? EN_HTML[k]);
+    });
+    document.querySelectorAll('[data-lang]').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang));
+    try { localStorage.setItem('fs-lang', lang); } catch {}
+  }
+  document.querySelectorAll('[data-lang]').forEach((b) => (b.onclick = () => setLang(b.dataset.lang)));
+  let saved = null;
+  try { saved = localStorage.getItem('fs-lang'); } catch {}
+  setLang(saved || ((navigator.language || '').toLowerCase().startsWith('vi') ? 'vi' : 'en'));
+
+  // ------------------------------------------------------------- generator
+  const $ = (s) => document.querySelector(s);
+  const status = $('#status'), out = $('#out'), lineEl = $('#line'), summary = $('#summary'), namesEl = $('#names');
+
+  function show(r, meta = {}) {
+    out.classList.add('show');
+    lineEl.textContent = r.line;
+    const miss = r.missing || [];
+    summary.innerHTML = `
+      <p>${t('bundle')}: <b>${meta.file || t('pasted')}</b>${meta.bytes ? ` · ${(meta.bytes / 1024).toFixed(0)} KB` : ''}${meta.at ? ` · ${new Date(meta.at).toLocaleString()}` : ''}</p>
+      <p class="${miss.length ? 'bad' : 'ok'}">${miss.length ? t('someMissing', miss.length) : t('allOk')}</p>
+      ${meta.alreadyHooked ? `<p class="bad">${t('already')}</p>` : ''}`;
+    namesEl.innerHTML = ORDER.map((k) => `<tr><td><code>${k}</code></td><td>${WHAT[k]}</td><td class="${r.names[k] ? '' : 'miss'}">${r.names[k] || t('notFound')}</td></tr>`).join('');
+    if (miss.length) namesEl.innerHTML += `<tr><td colspan="3" class="bad">${miss.map((m) => `<div>${m}</div>`).join('')}</td></tr>`;
+    out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  $('#gen').onclick = async () => {
+    const direct = $('#bundle').value.trim();
+    const param = direct ? `bundle=${encodeURIComponent(direct)}` : '';
+    $('#gen').disabled = true;
+    status.textContent = t('fetching');
+    try {
+      const r = await fetch(`/api/generate${param ? '?' + param : ''}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (!j.line) throw new Error(j.error || 'no result');
+      status.textContent = j.ok ? t('done') : t('doneMissing');
+      show(j, j);
+    } catch (e) {
+      status.innerHTML = `<span class="bad">${t('fail')}: ${e.message}</span> — ${t('tryOffline')}`;
+    } finally {
+      $('#gen').disabled = false;
+    }
+  };
+
+  const runLocal = (txt) => {
+    if (!txt || txt.length < 1000) { status.textContent = t('notBundle'); return; }
+    show(findNames(txt), { bytes: txt.length, alreadyHooked: txt.includes('window.__fs=') });
+    status.textContent = t('localDone');
+  };
+  $('#genLocal').onclick = () => runLocal($('#paste').value);
+  $('#file').onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(runLocal); };
+
+  const copyTo = async (text, el) => {
+    try { await navigator.clipboard.writeText(text); el.textContent = t('copied'); }
+    catch { el.textContent = t('copyManual'); }
+    setTimeout(() => (el.textContent = ''), 2000);
+  };
+  $('#copy').onclick = () => copyTo(lineEl.textContent, $('#copied'));
+  $('#copyWallet').onclick = () => copyTo($('#wallet').textContent, $('#walletCopied'));
+</script>
+</body>
+</html>

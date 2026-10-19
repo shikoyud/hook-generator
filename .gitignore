@@ -1,0 +1,5 @@
+node_modules
+.vercel
+game-*.js
+!public/farmbot.user.js
+.claude/
