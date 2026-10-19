@@ -1570,7 +1570,7 @@ ${row('Pace', `${live.perMin}/${live.allowed} per min · variation ${ratio}`, li
 
 ${sec('farm', 'Farming options', `
 <div class="ctl">${cb('bulk', 'batch fields', 'Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game.')}
-${cb('waitForBatch', `wait up to ${cfg.waitMinutes} min to harvest together`, 'A ready field is left standing while other fields will ripen within this many minutes, so one Harvest all covers them for 2 energy. Feeding, collecting and fruit still happen meanwhile.')}
+<label class="tg" title="A ready field is left standing while other fields will ripen within this many minutes, so one Harvest all covers them for 2 energy. Feeding, collecting and fruit still happen meanwhile."><input type="checkbox" data-c="waitForBatch" ${cfg.waitForBatch ? 'checked' : ''}> wait up to <input type="number" min="1" max="60" step="1" value="${cfg.waitMinutes}" data-n="waitMinutes" style="width:46px"> min to harvest together</label>
 ${cb('capAware', 'cap-aware planting', 'Plant cash crops only while they fit under today\'s harvest cap; otherwise silo crops.')}
 ${cb('plantKeepsReserve', 'keep energy for meals', 'Planting waits while energy − 2 would drop under what today\'s remaining animal meals need. Off: plant whenever 2 energy is available; hungry animals are still fed first.')}
 ${cb('claim', 'village income', 'Collect town-hall income automatically.')}</div>
@@ -1612,6 +1612,17 @@ ${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk}
           saveCfg();
           log(`${i.dataset.c}: ${i.checked ? 'on' : 'off'}`);
           this.render();
+        };
+      });
+      b.querySelectorAll('[data-n]').forEach((i) => {
+        i.onchange = () => {
+          const v = Number(i.value);
+          if (Number.isFinite(v) && v > 0) {
+            cfg[i.dataset.n] = v;
+            saveCfg();
+            log(`${i.dataset.n}: ${v}`);
+            this.render();
+          }
         };
       });
     },
