@@ -45,6 +45,8 @@
     defaultCrop: null, // crop id used by 'auto' when a field has no history
     capAware: true, // stop planting cash crops once today's projected income reaches the cap
     mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
+    bulk: true, // use the game's Harvest all / Plant all path: one bulkStart op, 2 energy for the whole batch
+    bulkMin: 2, // batch only when at least this many fields qualify
     feedFirst: true, // grow wheat/corn for the silo until feed covers feedDaysAhead, then the plan's crop
     feedDaysAhead: 1, // days of feed to keep in stock (bags + mixable grain)
     mixFeed: true, // mix grain into bags automatically (costs no energy)
@@ -293,19 +295,34 @@
 
       const reserve = Core.mealReserve(farm, now, h);
       if (energy - 2 < reserve) return null;
+      const empties = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`) && h.or(f, now).state === 'empty');
+      const choice = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties })[0];
+      return choice ? { job: { type: 'plant', fieldId: choice.fieldId, crop: choice.crop }, key: `field:${choice.fieldId}`, why: choice.why } : null;
+    },
+
+    // What to plant on each of the given empty fields, in order. Feed-first needs are spread
+    // across the fields, and the harvest-cap room is consumed as crops are assigned, so a batch
+    // never overshoots what a single field at a time would have done.
+    plantChoices({ farm, now, h, cfg, plan, last, fields }) {
       const proj = cfg.capAware !== false && h.cap ? Core.incomeProjection(farm, now, h) : null;
-      // A cash crop is planted only if its value still fits under today's cap.
-      const fits = (cropId) => {
-        if (!proj) return true;
+      let committed = proj ? proj.total : 0;
+      const valueOf = (cropId) => {
         const c = h.crops.find((x) => x.id === cropId);
-        return proj.total + (c ? h.hr(farm, c) : 0) <= proj.cap;
+        return c ? h.hr(farm, c) : 0;
       };
+      const fits = (cropId) => !proj || committed + valueOf(cropId) <= proj.cap;
       const feed = cfg.feedFirst ? Core.feedPlan(farm, now, h, cfg) : null;
-      for (const f of farm.fields) {
-        if (!Core.isBuilt(f, now) || !free(`field:${f.id}`)) continue;
-        if (h.or(f, now).state !== 'empty') continue;
-        if (feed && feed.next) {
-          return { job: { type: 'plant', fieldId: f.id, crop: feed.next }, key: `field:${f.id}`, why: `feed plan: need ${feed.wheatNeed} wheat, ${feed.cornNeed} corn` };
+      let wheatNeed = feed ? feed.wheatNeed : 0, cornNeed = feed ? feed.cornNeed : 0;
+      let grainRoom = feed ? feed.capacityLeft : 0;
+      const out = [];
+      for (const f of fields) {
+        if (feed && feed.siloOk && grainRoom > 0 && (wheatNeed > 0 || cornNeed > 0)) {
+          const crop = wheatNeed > cornNeed ? 'wheat' : cornNeed > wheatNeed ? 'corn' : feed.wheat + feed.growingW <= feed.corn + feed.growingC ? 'wheat' : 'corn';
+          if (crop === 'wheat') wheatNeed--;
+          else cornNeed--;
+          grainRoom--;
+          out.push({ fieldId: f.id, crop, why: `feed plan: need ${wheatNeed} wheat, ${cornNeed} corn more` });
+          continue;
         }
         let crop = Core.resolveCrop(f.id, plan, last, h.crops, cfg);
         if (!crop) continue;
@@ -313,15 +330,54 @@
         if (proj) {
           if (h.de(crop)) {
             if (!proj.siloOk && !fits(crop)) continue; // would sell as cash over the cap
+            if (!proj.siloOk) committed += valueOf(crop);
           } else if (!fits(crop)) {
             if (!proj.siloOk) continue;
             crop = Core.siloCropChoice(farm);
             why = 'cap reached: silo crop';
-          }
+          } else committed += valueOf(crop);
         }
-        return { job: { type: 'plant', fieldId: f.id, crop }, key: `field:${f.id}`, why };
+        out.push({ fieldId: f.id, crop, why });
       }
-      return null;
+      return out;
+    },
+
+    // Nearest-neighbour walk order, as the game's Harvest all does, starting near the middle.
+    walkOrder(fields) {
+      if (fields.length < 3) return fields.slice();
+      const cx = fields.reduce((a, f) => a + f.x, 0) / fields.length, cy = fields.reduce((a, f) => a + f.y, 0) / fields.length;
+      const rest = fields.slice();
+      let cur = { x: cx, y: cy };
+      const out = [];
+      while (rest.length) {
+        rest.sort((a, b) => Math.hypot(a.x - cur.x, a.y - cur.y) - Math.hypot(b.x - cur.x, b.y - cur.y));
+        cur = rest.shift();
+        out.push(cur);
+      }
+      return out;
+    },
+
+    // A batch to run through the game's bulk path: one `bulkStart` op charges 2 energy for every
+    // field of that kind, then each field is queued as a normal job. Harvest first, then plant.
+    // Returns {kind, jobs:[{job,key,why}]} or null when fewer than cfg.bulkMin fields qualify.
+    bulkPlan({ farm, now, queued, plan, last, cfg, h, skip = {} }) {
+      if (!farm || !cfg.bulk) return null;
+      const free = (key) => !queued.has(key) && !(skip[key] > now);
+      const energy = farm.today.energy;
+      const min = cfg.bulkMin ?? 2;
+      const built = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`));
+      const ready = built.filter((f) => h.or(f, now).state === 'ready');
+      if (ready.length >= min && energy >= 2) {
+        const jobs = Core.walkOrder(ready).map((f) => ({ job: { type: 'harvest', fieldId: f.id }, key: `field:${f.id}`, why: 'ready', crop: h.or(f, now).crop?.id }));
+        return { kind: 'harvest', jobs };
+      }
+      const reserve = Core.mealReserve(farm, now, h);
+      if (energy - 2 < reserve) return null;
+      const empties = built.filter((f) => h.or(f, now).state === 'empty');
+      if (empties.length < min) return null;
+      const choices = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: Core.walkOrder(empties) });
+      if (choices.length < min) return null;
+      return { kind: 'plant', jobs: choices.map((c) => ({ job: { type: 'plant', fieldId: c.fieldId, crop: c.crop }, key: `field:${c.fieldId}`, why: c.why })) };
     },
 
     // How much energy to buy right now, and why. Pure: needs farm, now, helpers, cfg,
@@ -344,7 +400,8 @@
       // 1. waiting work
       const win = Core.mealWindow(now, farm.tz);
       let need = Core.mealReserve(farm, now, h);
-      for (const f of farm.fields) if (f.crop && Core.isBuilt(f, now) && h.or(f, now).state === 'ready') need += 2;
+      const readyFields = farm.fields.filter((f) => f.crop && Core.isBuilt(f, now) && h.or(f, now).state === 'ready').length;
+      need += cfg.bulk && readyFields >= (cfg.bulkMin ?? 2) ? 2 : readyFields * 2;
       for (const s of farm.structures) {
         if (!s.slots) continue;
         for (const slot of s.slots) if (slot.tree && h.Or(slot, now).state === 'ready') need += 2;
@@ -379,8 +436,12 @@
         for (let i = 0; i < n; i++) candidates.push(v);
       }
       candidates.sort((a, b) => b - a);
+      // With bulk, one plant batch and one harvest batch cover every field for 2 energy each,
+      // so a cycle costs 4 energy spread over all cash fields instead of 4 per field.
+      const cashFields = Math.max(1, new Set(farm.fields.filter((f) => Core.isBuilt(f, now)).map((f) => f.id)).size);
+      const perCycle = cfg.bulk && cashFields >= (cfg.bulkMin ?? 2) ? Math.max(0.5, 4 / cashFields) : 4;
       let room = proj.room, cycles = 0;
-      const cycleCost = 4 * pricePer * cfg.energyMargin;
+      const cycleCost = perCycle * pricePer * cfg.energyMargin;
       for (const v of candidates) {
         if (v > room) break; // would only pile into tomorrow's carry
         if (v < cycleCost) break; // not worth the energy
@@ -388,9 +449,9 @@
         cycles++;
       }
       out.cycles = cycles;
-      out.cycleEnergy = cycles * 4;
+      out.cycleEnergy = Math.ceil(cycles * perCycle);
 
-      const target = need + cycles * 4;
+      const target = need + out.cycleEnergy;
       let shortfall = target - energy;
       if (shortfall <= 0) return { ...out, reason: `energy ${energy} covers ${need} waiting + ${cycles} cycles` };
 
@@ -402,7 +463,7 @@
       const budget = Math.floor(wallet * cfg.energyTokenFraction);
       while (buy > 0 && h.energyPrice(farm, buy) > budget) buy -= 10;
       if (buy < Math.min(cfg.energyMinBuy, 10)) return { ...out, reason: `wallet ${farm.tokens} too low (budget ${budget})` };
-      return { ...out, buy, reason: `${need} for waiting work + ${cycles * 4} for ${cycles} cycles − ${energy} on hand` };
+      return { ...out, buy, reason: `${need} for waiting work + ${out.cycleEnergy} for ${cycles} cycles − ${energy} on hand` };
     },
 
     shouldClaim(accrued, lastClaimAt, now, cfg) {
@@ -584,7 +645,7 @@
   // -------------------------------------------------------------- GAME HOOK
   let G = null; // window.__fs
   let hookProblems = [];
-  const stats = { flags: 0, lastFlag: '', jobs: 0, refused: 0, battles: 0, claims: 0, claimed: 0, energyBought: 0, energySpent: 0 };
+  const stats = { flags: 0, lastFlag: '', jobs: 0, bulk: 0, refused: 0, battles: 0, claims: 0, claimed: 0, energyBought: 0, energySpent: 0 };
 
   const isFn = (v) => typeof v === 'function';
   const HOOK_CHECKS = {
@@ -808,7 +869,41 @@
       const pending = G.U.pendingJobs().length;
       if (pending >= cfg.maxPending) return (this.status = `farmer busy (${pending} queued)`);
 
-      const pick = Core.pickJob({ farm, now, queued: G.U.queued, plan: Planner.plan, last: Planner.last, cfg, h: helpers(), skip: this.skip });
+      const args = { farm, now, queued: G.U.queued, plan: Planner.plan, last: Planner.last, cfg, h: helpers(), skip: this.skip };
+      const batch = Core.bulkPlan(args);
+      if (batch) {
+        const g = Pacer.check();
+        if (!g.ok) {
+          stats.refused++;
+          this.status = `holding: ${g.reason} (${g.count}/${Math.floor(g.budget)} per min)`;
+          return;
+        }
+        // Same sequence as the game's Harvest all / Plant all button: bulkStart (2 energy for the
+        // batch), then every field as a normal job in one synchronous burst, which recordJob
+        // counts once, exactly like the button.
+        const r = G.q.op('bulkStart', batch.kind);
+        if (!r.ok) {
+          log(`Bulk ${batch.kind} refused: ${r.msg}`, 'bad');
+          for (const j of batch.jobs) this.skip[j.key] = now + cfg.retryAfter * SEC;
+          return;
+        }
+        let sent = 0;
+        for (const j of batch.jobs) {
+          if (j.job.type === 'harvest') Planner.remember(j.job.fieldId, j.crop);
+          if (!G.jf(j.job, true)) {
+            this.skip[j.key] = now + cfg.retryAfter * SEC;
+            break;
+          }
+          sent++;
+        }
+        stats.jobs++;
+        stats.bulk++;
+        this.status = `${batch.kind} all: ${sent} fields`;
+        log(`${batch.kind === 'harvest' ? 'Harvest' : 'Plant'} all: ${sent} field${sent === 1 ? '' : 's'} for 2 energy${batch.kind === 'plant' ? ' (' + [...new Set(batch.jobs.map((j) => j.job.crop))].join(', ') + ')' : ''}.`);
+        return;
+      }
+
+      const pick = Core.pickJob(args);
 
       if (!pick) {
         this.status = 'idle';
@@ -1294,7 +1389,8 @@
 ${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : '<button class="btn battle" data-a="battle">Battle</button>'}</div>
 <div class="ctl"><label class="tg" title="Buy energy when it runs low, only for work that pays: waiting meals/harvests, plus extra crop cycles that fit under today's cap and return at least ${cfg.energyMargin}× their cost."><input type="checkbox" data-c="autoEnergy" ${cfg.autoEnergy ? 'checked' : ''}> auto-buy energy</label>
 <label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
-<label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label></div>
+<label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label>
+<label class="tg" title="Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game"><input type="checkbox" data-c="bulk" ${cfg.bulk ? 'checked' : ''}> batch fields</label></div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
 ${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : this.esc(farm ? (Battle.blockReason(farm) ? `off (${Battle.blockReason(farm)})` : 'off · press Battle') : 'off'), Battle.engaged ? 'good' : '')}
 ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}`)}
@@ -1302,7 +1398,7 @@ ${row('Jobs / min', `${live.perMin} / ${live.allowed} (bot budget ${Math.floor(l
 ${row('Gap variation', `${ratio} (game flags &lt; 0.08, bot holds &lt; ${cfg.minCv}) · n=${live.n}`, isFinite(live.ratio) && live.ratio < cfg.minCv ? 'bad' : '')}
 ${row('Energy', farm ? `${farm.today.energy} (today's meals still need ${reserve})` : '–')}
 ${row('Farmers', G.Ca.farmers)}
-${row('Jobs sent / held', `${stats.jobs} / ${stats.refused}`)}
+${row('Jobs sent / held', `${stats.jobs} (${stats.bulk} batches) / ${stats.refused}`)}
 ${row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good')}
 ${row('Battle runs', stats.battles)}
 <h4>Harvest cap today</h4>
