@@ -7,7 +7,7 @@ const esc = (s) => s.replace(/\$/g, '\\$');
 
 export const ORDER = [
   'q', 'U', 'Ca', 'Pg', 'jf', 'W', 'or', 'wr', 'Or', 'te', 'hr', 'de', 'je', 'Ae', 'Fe',
-  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap',
+  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice',
 ];
 
 export const WHAT = {
@@ -33,6 +33,7 @@ export const WHAT = {
   siloBuilt: 'silo built',
   siloCount: 'silo stock',
   siloCap: 'silo capacity',
+  energyPrice: 'token price of n energy',
 };
 
 /**
@@ -85,6 +86,9 @@ export function findNames(src) {
     'silo (built/count/cap)',
     new RegExp(`if\\((${ID})\\(i\\.crop\\.id\\)&&(${ID})\\(e,n\\)&&(${ID})\\(e\\)<(${ID})\\(e\\)\\)return ${ID}\\(e,i\\.crop\\.id,1\\)`)
   );
+
+  // energyPrice: `Mi=(e,t)=>Math.ceil(Ee(be(e.level)*t))`
+  names.energyPrice = find('energyPrice', new RegExp(`(${ID})=\\(e,t\\)=>Math\\.ceil\\(${ID}\\(${ID}\\(e\\.level\\)\\*t\\)\\)`));
 
   for (const k of ORDER) if (!names[k]) names[k] = null;
   const found = ORDER.filter((k) => names[k]);
