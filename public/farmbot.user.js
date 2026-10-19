@@ -43,6 +43,7 @@
     retryAfter: 60, // seconds to skip a target after a refusal
     defaultCrop: null, // crop id used by 'auto' when a field has no history
     capAware: true, // stop planting cash crops once today's projected income reaches the cap
+    mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
     // energy purchases (see Core.energyPlan)
     autoEnergy: false, // off until you turn it on in the panel
     energyMargin: 1.5, // a plant+harvest cycle must return at least this × its energy cost
@@ -137,6 +138,22 @@
       return n * 2;
     },
 
+    // Mine state, same arithmetic as the game: a cart every 6 h from the last collection
+    // (or build end), at most 2; `full` means production has stopped.
+    mineState(structure, now) {
+      if (!Core.isBuilt(structure, now)) return { carts: 0, full: false, nextMs: 216e5 };
+      const built = structure.buildUntil ?? 0;
+      let since = structure.mineAt ?? built;
+      since = Math.max(since > now ? built : since, built);
+      const elapsed = Math.max(0, now - since);
+      const carts = Math.min(2, Math.floor(elapsed / 216e5));
+      return { carts, full: carts >= 2, nextMs: carts >= 2 ? 0 : 216e5 - (elapsed % 216e5) };
+    },
+    // Oil well: once per farm day.
+    oilReady(structure, now, tzMin) {
+      return Core.isBuilt(structure, now) && structure.collectDay !== Core.mealWindow(now, tzMin).slice(0, 10);
+    },
+
     siloCropChoice(farm) {
       const s = farm.silo || {};
       return (s.wheat || 0) <= (s.corn || 0) ? 'wheat' : 'corn';
@@ -221,6 +238,20 @@
         }
       }
 
+      for (const s of farm.structures) {
+        const key = `rwa:${s.id}`;
+        if (!free(key)) continue;
+        if (s.kind === 'oilwell' && Core.oilReady(s, now, farm.tz)) {
+          return { job: { type: 'fuel', structureId: s.id }, key, why: 'oil ready' };
+        }
+        if (s.kind === 'mine') {
+          const m = Core.mineState(s, now);
+          if (m.carts >= 1 && (m.full || m.carts >= (cfg.mineMinCarts ?? 2))) {
+            return { job: { type: 'mine', structureId: s.id }, key, why: `${m.carts} cart${m.carts > 1 ? 's' : ''}${m.full ? ' (full)' : ''}` };
+          }
+        }
+      }
+
       const reserve = Core.mealReserve(farm, now, h);
       if (energy - 2 < reserve) return null;
       const proj = cfg.capAware !== false && h.cap ? Core.incomeProjection(farm, now, h) : null;
@@ -274,6 +305,10 @@
       for (const s of farm.structures) {
         if (!s.slots) continue;
         for (const slot of s.slots) if (slot.tree && h.Or(slot, now).state === 'ready') need += 2;
+      }
+      for (const s of farm.structures) {
+        if (s.kind === 'oilwell' && Core.oilReady(s, now, farm.tz)) need += 2;
+        if (s.kind === 'mine' && Core.mineState(s, now).carts >= (cfg.mineMinCarts ?? 2)) need += 2;
       }
       const readyKinds = new Set(farm.animals.filter((a) => a.productReady).map((a) => a.kind));
       for (const s of farm.structures) {
