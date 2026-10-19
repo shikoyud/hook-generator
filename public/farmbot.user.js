@@ -1529,11 +1529,16 @@ ${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed
 ${sec('cap', `Harvest cap today${proj ? ` · ${n(proj.total)} / ${n(proj.cap)}` : ''}`, !farm ? '<p class="hint">waiting for your farm…</p>' : proj ? row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Room for cash crops', proj.total >= proj.cap ? 'none: silo crops only' : n(proj.room), proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>')}
 
 ${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk} batches) / ${stats.refused}`) + row('Farmers', G.Ca.farmers) + row('Battle runs', stats.battles) + row('Village income', accrued == null ? '–' : `${n(accrued)} accrued · collected ${stats.claims}× (${n(stats.claimed)})`) + row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good') + `<p class="hint">Delays ${cfg.delayMin}–${cfg.delayMax}s, idle ${cfg.idleMin}–${cfg.idleMax}s. Advanced: <code>__bot.cfg</code> then <code>__bot.save()</code>.</p>`)}`;
-      b.querySelectorAll('details[data-sec]').forEach((el) => {
-        el.addEventListener('toggle', () => {
+      // Store the open/closed state on the click itself (the native toggle event is async and a
+      // refresh can rebuild the panel before it fires), then re-render from the stored state.
+      b.querySelectorAll('details[data-sec] > summary').forEach((sum) => {
+        sum.addEventListener('click', (e) => {
+          e.preventDefault();
+          const el = sum.parentElement;
           const o = store.get('fsbot:open', {});
-          o[el.dataset.sec] = el.open;
+          o[el.dataset.sec] = !el.open;
           store.set('fsbot:open', o);
+          this.refresh(true);
         });
       });
       b.querySelector('[data-a="start"]')?.addEventListener('click', start);
