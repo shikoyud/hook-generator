@@ -48,6 +48,8 @@
     mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
     bulk: true, // use the game's Harvest all / Plant all path: one bulkStart op, 2 energy for the whole batch
     bulkMin: 2, // batch only when at least this many fields qualify
+    waitForBatch: true, // hold a ready harvest while other fields ripen within waitMinutes, then harvest all together
+    waitMinutes: 5,
     feedFirst: true, // grow wheat/corn for the silo until feed covers feedDaysAhead, then the plan's crop
     feedDaysAhead: 1, // days of feed to keep in stock (bags + mixable grain)
     mixFeed: true, // mix grain into bags automatically (costs no energy)
@@ -282,11 +284,14 @@
       const ready = farm.animals.find((a) => a.productReady && free(`collect:${a.id}`));
       if (ready) return { job: { type: 'collect', animalId: ready.id }, key: `collect:${ready.id}`, why: 'product ready' };
 
-      for (const f of farm.fields) {
-        if (!Core.isBuilt(f, now) || !free(`field:${f.id}`)) continue;
-        const st = h.or(f, now);
-        if (st.state === 'ready') {
-          return { job: { type: 'harvest', fieldId: f.id }, key: `field:${f.id}`, why: 'ready', crop: st.crop && st.crop.id };
+      const holdHarvest = cfg.waitForBatch && cfg.bulk && Core.ripeningSoon(farm, now, h, cfg.waitMinutes ?? 5, free).length > 0;
+      if (!holdHarvest) {
+        for (const f of farm.fields) {
+          if (!Core.isBuilt(f, now) || !free(`field:${f.id}`)) continue;
+          const st = h.or(f, now);
+          if (st.state === 'ready') {
+            return { job: { type: 'harvest', fieldId: f.id }, key: `field:${f.id}`, why: 'ready', crop: st.crop && st.crop.id };
+          }
         }
       }
 
@@ -385,6 +390,17 @@
       return out;
     },
 
+    // Fields that will be ready within `minutes` from now (growing, built, not queued).
+    ripeningSoon(farm, now, h, minutes, free = () => true) {
+      const out = [];
+      for (const f of farm.fields) {
+        if (!f.crop || !Core.isBuilt(f, now) || !free(`field:${f.id}`)) continue;
+        const st = h.or(f, now);
+        if (st.state === 'growing' && st.remainingMs <= minutes * 60000) out.push({ id: f.id, remainingMs: st.remainingMs });
+      }
+      return out.sort((a, b) => a.remainingMs - b.remainingMs);
+    },
+
     // Nearest-neighbour walk order, as the game's Harvest all does, starting near the middle.
     walkOrder(fields) {
       if (fields.length < 3) return fields.slice();
@@ -410,6 +426,10 @@
       const min = cfg.bulkMin ?? 2;
       const built = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`));
       const ready = built.filter((f) => h.or(f, now).state === 'ready');
+      if (ready.length && cfg.waitForBatch && cfg.bulk) {
+        const soon = Core.ripeningSoon(farm, now, h, cfg.waitMinutes ?? 5, free);
+        if (soon.length) return { kind: 'wait', jobs: [], ready: ready.length, soon: soon.length, inMs: soon[soon.length - 1].remainingMs };
+      }
       if (ready.length >= min && energy >= 2) {
         const jobs = Core.walkOrder(ready).map((f) => ({ job: { type: 'harvest', fieldId: f.id }, key: `field:${f.id}`, why: 'ready', crop: h.or(f, now).crop?.id }));
         return { kind: 'harvest', jobs };
@@ -969,6 +989,20 @@
 
       const args = { farm, now, queued: G.U.queued, plan: Planner.plan, last: Planner.last, cfg, h: helpers(), skip: this.skip };
       const batch = Core.bulkPlan(args);
+      if (batch && batch.kind === 'wait') {
+        this.status = `waiting ${Math.ceil(batch.inMs / 60000)} min so ${batch.ready + batch.soon} fields can be harvested together`;
+        // fall through to other work (feeding, collecting, fruit) but not the harvest
+        const pick = Core.pickJob(args);
+        if (pick && pick.job.type !== 'harvest' && pick.job.type !== 'plant') {
+          const g = Pacer.check();
+          if (!g.ok) return;
+          if (G.jf(pick.job, true)) {
+            stats.jobs++;
+            log(`${pick.job.type} ${pick.job.animalId || pick.job.structureId} — ${pick.why} (while waiting for the harvest batch)`);
+          }
+        }
+        return;
+      }
       if (batch) {
         const g = Pacer.check();
         if (!g.ok) {
@@ -1536,6 +1570,7 @@ ${row('Pace', `${live.perMin}/${live.allowed} per min · variation ${ratio}`, li
 
 ${sec('farm', 'Farming options', `
 <div class="ctl">${cb('bulk', 'batch fields', 'Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game.')}
+${cb('waitForBatch', `wait up to ${cfg.waitMinutes} min to harvest together`, 'A ready field is left standing while other fields will ripen within this many minutes, so one Harvest all covers them for 2 energy. Feeding, collecting and fruit still happen meanwhile.')}
 ${cb('capAware', 'cap-aware planting', 'Plant cash crops only while they fit under today\'s harvest cap; otherwise silo crops.')}
 ${cb('plantKeepsReserve', 'keep energy for meals', 'Planting waits while energy − 2 would drop under what today\'s remaining animal meals need. Off: plant whenever 2 energy is available; hungry animals are still fed first.')}
 ${cb('claim', 'village income', 'Collect town-hall income automatically.')}</div>
