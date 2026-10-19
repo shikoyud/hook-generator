@@ -44,7 +44,7 @@
     retryAfter: 60, // seconds to skip a target after a refusal
     defaultCrop: null, // crop id used by 'auto' when a field has no history
     capAware: true, // stop planting cash crops once today's projected income reaches the cap
-    plantKeepsReserve: true, // hold planting while energy − 2 would drop under today's remaining meals
+    plantKeepsReserve: false, // hold planting while energy − 2 would drop under today's remaining meals
     mineMinCarts: 2, // collect the mine at this many carts (2 = full; a cart every 6 h, max 2)
     bulk: true, // use the game's Harvest all / Plant all path: one bulkStart op, 2 energy for the whole batch
     bulkMin: 2, // batch only when at least this many fields qualify
@@ -200,6 +200,22 @@
       };
     },
 
+    // Same as mealReserve, with the pieces: buildings with animals, meals left today per
+    // building (2 before noon, 1 after; minus the current meal if that building was fed).
+    mealReserveDetail(farm, now, h) {
+      const win = Core.mealWindow(now, farm.tz);
+      const morning = win.endsWith('S');
+      let buildings = 0, meals = 0;
+      for (const st of farm.structures) {
+        const b = h.Fe[st.kind];
+        if (!b || !b.animal) continue;
+        if (!farm.animals.some((a) => a.kind === b.animal)) continue;
+        buildings++;
+        meals += (st.fedWindow === win ? 0 : 1) + (morning ? 1 : 0);
+      }
+      return { buildings, meals, energy: meals * 2, windowsLeft: morning ? 2 : 1, text: `${buildings} building${buildings === 1 ? '' : 's'} × ${buildings ? (meals / buildings).toFixed(meals % buildings ? 1 : 0) : 0} meal(s) left × 2 = ${meals * 2}` };
+    },
+
     siloCropChoice(farm) {
       const s = farm.silo || {};
       return (s.wheat || 0) <= (s.corn || 0) ? 'wheat' : 'corn';
@@ -313,7 +329,10 @@
       const energy = farm.today.energy;
       if (energy < 2) return `${empties.length} empty field(s), no energy`;
       const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
-      if (energy - 2 < reserve) return `${empties.length} empty field(s): planting costs 2, but ${reserve} is kept for the animals' remaining meals today (2 per building per meal), so ${reserve + 2} is needed and you have ${energy}. Turn off "keep energy for meals" or buy energy.`;
+      if (energy - 2 < reserve) {
+        const d = Core.mealReserveDetail(farm, now, h);
+        return `${empties.length} empty field(s): planting costs 2, but ${reserve} is kept for today's remaining meals (${d.text}), so ${reserve + 2} is needed and you have ${energy}. Turn off "keep energy for meals" or buy energy.`;
+      }
       const choices = Core.plantChoices({ farm, now, h, cfg, plan, last, fields: empties });
       if (!choices.length) {
         const proj = cfg.capAware !== false && h.cap ? Core.incomeProjection(farm, now, h) : null;
@@ -1349,6 +1368,12 @@
 #fsbot .ctl{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center}
 #fsbot label.tg{display:flex;align-items:center;gap:4px}
 #fsbot h4{margin:8px 0 2px;font-size:12px;color:#5a4631}
+#fsbot details{margin:8px 0 0;border:1px solid #d8cfb8;border-radius:6px;background:#fffdf5}
+#fsbot details>summary{cursor:pointer;padding:5px 8px;font-weight:700;color:#5a4631;list-style:none;display:flex;justify-content:space-between}
+#fsbot details>summary::after{content:'+';color:#8a6d4a}
+#fsbot details[open]>summary::after{content:'–'}
+#fsbot details>*:not(summary){margin-left:8px;margin-right:8px}
+#fsbot details>.row:last-child,#fsbot details>p:last-child{margin-bottom:6px}
 #fsbot table{width:100%;border-collapse:collapse;margin-top:6px}
 #fsbot th,#fsbot td{padding:3px 4px;border-bottom:1px solid #e3dac4;text-align:left;vertical-align:middle}
 #fsbot tr.sel td{background:#fff3c4}
@@ -1470,36 +1495,47 @@
       const n = (v) => Math.round(v).toLocaleString();
       const proj = farm && G.cap ? Core.incomeProjection(farm, now, helpers()) : null;
       const accrued = farm && G.passive ? Math.floor(G.passive(farm, now)) : null;
+      const d = farm ? Core.mealReserveDetail(farm, now, helpers()) : null;
+      const open = (k) => (store.get('fsbot:open', {})[k] ? ' open' : '');
+      const sec = (k, title, inner) => `<details data-sec="${k}"${open(k)}><summary>${title}</summary>${inner}</details>`;
+      const cb = (key, label, title = '', disabled = false) => `<label class="tg" title="${this.esc(title)}"><input type="checkbox" data-c="${key}" ${cfg[key] ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${label}</label>`;
+      const energyLine = !farm ? 'waiting for your farm…' : G.energyPrice ? (cfg.autoEnergy ? (Farm.lastEnergyPlan ? (Farm.lastEnergyPlan.buy ? `next: buy ${Farm.lastEnergyPlan.buy} (${Farm.lastEnergyPlan.reason})` : Farm.lastEnergyPlan.reason) : 'waiting for first tick') : 'auto-buy off') : 'price function not in hook';
       b.innerHTML = `
 <div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
 ${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : '<button class="btn battle" data-a="battle">Battle</button>'}</div>
-<div class="ctl"><label class="tg" title="Master switch. The reasons below say what energy may be bought for."><input type="checkbox" data-c="autoEnergy" ${cfg.autoEnergy ? 'checked' : ''}> auto-buy energy</label>
-<span class="hint">for:</span>
-<label class="tg" title="Today's remaining animal meals (2 per animal building per meal window left)."><input type="checkbox" data-c="energyForMeals" ${cfg.energyForMeals ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> meals</label>
-<label class="tg" title="Ready crops, ripe fruit, products waiting, a full mine, today's oil."><input type="checkbox" data-c="energyForWaiting" ${cfg.energyForWaiting ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> waiting harvests</label>
-<label class="tg" title="Extra plant+harvest cycles that still fit under today's harvest cap and earn at least ${cfg.energyMargin}× their energy cost."><input type="checkbox" data-c="energyForCycles" ${cfg.energyForCycles ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> extra crop cycles</label>
-<label class="tg" title="Between arena runs: buy 5 more when the loot cap is open and the last run earned at least ${cfg.energyMargin}× the price of 5 energy."><input type="checkbox" data-c="energyForBattle" ${cfg.energyForBattle ? 'checked' : ''} ${cfg.autoEnergy ? '' : 'disabled'}> battle runs</label></div>
-<div class="ctl"><label class="tg"><input type="checkbox" data-c="claim" ${cfg.claim ? 'checked' : ''}> village income</label>
-<label class="tg"><input type="checkbox" data-c="capAware" ${cfg.capAware ? 'checked' : ''}> cap-aware planting</label>
-<label class="tg" title="Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game"><input type="checkbox" data-c="bulk" ${cfg.bulk ? 'checked' : ''}> batch fields</label>
-<label class="tg" title="On: planting waits while energy − 2 would drop under what today's remaining animal meals need (2 per animal building per meal window left). Off: plant whenever you have 2 energy; feeding still comes first when an animal is hungry."><input type="checkbox" data-c="plantKeepsReserve" ${cfg.plantKeepsReserve ? 'checked' : ''}> keep energy for meals</label></div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
 ${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : this.esc(farm ? (Battle.blockReason(farm) ? `off (${Battle.blockReason(farm)})` : 'off · press Battle') : 'off'), Battle.engaged ? 'good' : '')}
-${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}`)}
-${row('Jobs / min', `${live.perMin} / ${live.allowed} (bot budget ${Math.floor(live.allowed * cfg.budgetFraction)})`, live.perMin > live.allowed * cfg.budgetFraction ? 'bad' : '')}
-${row('Gap variation', `${ratio} (game flags &lt; 0.08, bot holds &lt; ${cfg.minCv}) · n=${live.n}`, isFinite(live.ratio) && live.ratio < cfg.minCv ? 'bad' : '')}
-${row('Energy', farm ? `${farm.today.energy} (today's meals still need ${reserve})` : '–')}
-${row('Farmers', G.Ca.farmers)}
-${row('Jobs sent / held', `${stats.jobs} (${stats.bulk} batches) / ${stats.refused}`)}
-${row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good')}
-${row('Battle runs', stats.battles)}
-<h4>Harvest cap today</h4>
-${!farm ? '<p class="hint">waiting for your farm to load…</p>' : proj ? row('Cap', n(proj.cap)) + row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Projected total', `${n(proj.total)} (${proj.total >= proj.cap ? 'cap reached: silo crops only' : n(proj.room) + ' room for cash crops'})`, proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>'}
-<h4>Energy purchases</h4>
-${!farm ? '<p class="hint">waiting for your farm to load…</p>' : G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens per energy`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Policy', cfg.autoEnergy ? (Farm.lastEnergyPlan ? this.esc(Farm.lastEnergyPlan.buy ? `buy ${Farm.lastEnergyPlan.buy}: ${Farm.lastEnergyPlan.reason}` : Farm.lastEnergyPlan.reason) : 'waiting for first tick') : 'off', cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '') + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% of wallet · margin ${cfg.energyMargin}×`) : '<p class="hint">price function not in hook: regenerate the hook line</p>'}
-<h4>Village income</h4>
-${!farm ? '<p class="hint">waiting for your farm to load…</p>' : accrued == null ? '<p class="hint">passive function not in hook: regenerate the hook line</p>' : row('Accrued', n(accrued)) + row('Collected by bot', `${stats.claims}× · ${n(stats.claimed)}`) + row('Next check', `every ${cfg.claimEvery} min, min ${cfg.claimMin}`)}
-<p class="hint">Delays ${cfg.delayMin}–${cfg.delayMax}s (idle ${cfg.idleMin}–${cfg.idleMax}s, ${Math.round(cfg.idleChance * 100)}%). Edit via <code>__bot.cfg</code>, then <code>__bot.save()</code>.</p>`;
+${row('Energy', farm ? `${farm.today.energy}${d && d.energy ? ` · meals still need ${d.energy}` : ''}` : '–')}
+${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GATE UP</b>' : ''}${G.Ca.status.verified ? '' : ' · unverified'}${stats.flags ? ` · <b class="bad">${stats.flags} flag(s)</b>` : ''}`, G.Ca.blocked || stats.flags ? 'bad' : '')}
+${row('Pace', `${live.perMin}/${live.allowed} per min · variation ${ratio}`, live.perMin > live.allowed * cfg.budgetFraction || (isFinite(live.ratio) && live.ratio < cfg.minCv) ? 'bad' : '')}
+
+${sec('farm', 'Farming options', `
+<div class="ctl">${cb('bulk', 'batch fields', 'Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game.')}
+${cb('capAware', 'cap-aware planting', 'Plant cash crops only while they fit under today\'s harvest cap; otherwise silo crops.')}
+${cb('plantKeepsReserve', 'keep energy for meals', 'Planting waits while energy − 2 would drop under what today\'s remaining animal meals need. Off: plant whenever 2 energy is available; hungry animals are still fed first.')}
+${cb('claim', 'village income', 'Collect town-hall income automatically.')}</div>
+${d ? `<p class="hint">Meal reserve now: ${this.esc(d.text)} (${d.windowsLeft} meal window${d.windowsLeft === 1 ? '' : 's'} left today).</p>` : ''}`)}
+
+${sec('energy', `Energy purchases · ${cfg.autoEnergy ? 'on' : 'off'}`, `
+<div class="ctl">${cb('autoEnergy', 'auto-buy energy', 'Master switch.')}</div>
+<div class="ctl"><span class="hint">buy for:</span>
+${cb('energyForMeals', 'meals', 'Today\'s remaining animal meals.', !cfg.autoEnergy)}
+${cb('energyForWaiting', 'waiting harvests', 'Ready crops, ripe fruit, products, full mine, today\'s oil.', !cfg.autoEnergy)}
+${cb('energyForCycles', 'extra crop cycles', 'Cycles that fit under today\'s cap and earn at least the margin over their energy cost.', !cfg.autoEnergy)}
+${cb('energyForBattle', 'battle runs', 'Between runs, 5 more while the loot cap is open and the last run paid off.', !cfg.autoEnergy)}</div>
+${row('Plan', this.esc(energyLine), cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '')}
+${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens each`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Limits', `${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy · ${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% wallet · margin ${cfg.energyMargin}×`) : ''}`)}
+
+${sec('cap', `Harvest cap today${proj ? ` · ${n(proj.total)} / ${n(proj.cap)}` : ''}`, !farm ? '<p class="hint">waiting for your farm…</p>' : proj ? row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Room for cash crops', proj.total >= proj.cap ? 'none: silo crops only' : n(proj.room), proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>')}
+
+${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk} batches) / ${stats.refused}`) + row('Farmers', G.Ca.farmers) + row('Battle runs', stats.battles) + row('Village income', accrued == null ? '–' : `${n(accrued)} accrued · collected ${stats.claims}× (${n(stats.claimed)})`) + row('Flags seen', stats.flags ? `${stats.flags} · ${this.esc(stats.lastFlag)}` : '0', stats.flags ? 'bad' : 'good') + `<p class="hint">Delays ${cfg.delayMin}–${cfg.delayMax}s, idle ${cfg.idleMin}–${cfg.idleMax}s. Advanced: <code>__bot.cfg</code> then <code>__bot.save()</code>.</p>`)}`;
+      b.querySelectorAll('details[data-sec]').forEach((el) => {
+        el.addEventListener('toggle', () => {
+          const o = store.get('fsbot:open', {});
+          o[el.dataset.sec] = el.open;
+          store.set('fsbot:open', o);
+        });
+      });
       b.querySelector('[data-a="start"]')?.addEventListener('click', start);
       b.querySelector('[data-a="stop"]')?.addEventListener('click', stop);
       b.querySelector('[data-a="battle"]')?.addEventListener('click', () => Battle.begin());

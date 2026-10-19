@@ -6,9 +6,9 @@
 <title>Farming Season bot helper</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Handjet:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Handjet:wght@600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
-  /* Farming Season look: grass, wood signs, parchment, hard pixel edges. Handjet is a pixel-grid font with full Vietnamese. */
+  /* Farming Season look: grass, wood signs, parchment, hard pixel edges. Headings: Handjet (pixel grid, full Vietnamese, only at 28px+ where it renders solid). Text: IBM Plex Mono (Vietnamese subset, clean at any size). */
   :root {
     --grass:#5fae4f; --grass-dark:#3f8a3a; --grass-light:#7cc46a;
     --wood:#5a4631; --wood-dark:#3b2c1e; --wood-light:#8a6d4a;
@@ -19,10 +19,9 @@
   * { box-sizing: border-box; }
   /* Handjet's 700+ weights split into rows below ~26 px; keep inline bold at 600 */
   b, strong, th, label, summary { font-weight: 600; }
-  button { font-weight: 600; }
   html { image-rendering: pixelated; }
   body {
-    margin:0; color:var(--ink); font: 22px/1.3 'Handjet', ui-monospace, monospace; font-weight: 500;
+    margin:0; color:var(--ink); font: 15px/1.55 'IBM Plex Mono', ui-monospace, monospace; font-weight: 400;
     background-color: var(--grass);
     background-image:
       linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px),
@@ -52,9 +51,9 @@
   }
   h1 svg { flex:none; }
   .langs { display:flex; gap:6px; }
-  .langs button { background:var(--paper); color:var(--wood); border: var(--px) solid var(--wood-dark); box-shadow: var(--px) var(--px) 0 var(--wood-dark); padding:6px 12px; font: inherit; font-size:20px; cursor:pointer; }
+  .langs button { background:var(--paper); color:var(--wood); border: var(--px) solid var(--wood-dark); box-shadow: var(--px) var(--px) 0 var(--wood-dark); padding:6px 12px; font: 600 14px/1.3 'IBM Plex Mono', monospace; cursor:pointer; }
   .langs button.on { background:var(--gold); color:var(--wood-dark); }
-  .sub { color:#fff; margin:0 0 18px; text-shadow: 2px 2px 0 var(--wood-dark); font-size:22px; }
+  .sub { color:#fff; margin:0 0 18px; text-shadow: 2px 2px 0 var(--wood-dark); font-size:16px; }
   .sub a { color:var(--gold); }
 
   .card { background:var(--paper); padding:16px 18px 18px; margin-bottom:22px; position:relative; }
@@ -62,30 +61,30 @@
   .card::before, .card::after { content:""; position:absolute; width: calc(var(--px)*3); height: calc(var(--px)*3); background: var(--wood-light); border: var(--px) solid var(--wood-dark); }
   .card::before { left:-7px; top:-7px; } .card::after { right:-7px; top:-7px; }
   h2 { margin: 36px 0 16px; color:#fff; font: 700 32px/1.2 'Handjet', monospace; text-shadow: var(--px) var(--px) 0 var(--wood-dark), 0 0 0 var(--wood-dark); display:flex; align-items:center; gap:12px; }
-  h3 { margin: -16px -18px 14px; padding: 8px 18px; background: var(--wood); color: var(--paper); font: 600 25px/1.3 'Handjet', monospace; letter-spacing:.5px; border-bottom: var(--px) solid var(--wood-dark); box-shadow: inset 0 calc(var(--px)*-1) 0 var(--wood-light); }
+  h3 { margin: -16px -18px 14px; padding: 8px 18px; background: var(--wood); color: var(--paper); font: 700 28px/1.2 'Handjet', monospace; letter-spacing:.5px; border-bottom: var(--px) solid var(--wood-dark); box-shadow: inset 0 calc(var(--px)*-1) 0 var(--wood-light); }
   .card p { margin: 8px 0; }
   label { display:block; font-weight:600; margin-bottom:4px; }
-  input[type=url], input[type=number], textarea, select { width:100%; font: 20px/1.3 'Handjet', monospace; padding:8px 10px; background:#fff; border: var(--px) solid var(--wood-dark); box-shadow: inset var(--px) var(--px) 0 var(--paper-dark); color:var(--ink); }
+  input[type=url], input[type=number], textarea, select { width:100%; font: 14px/1.4 'IBM Plex Mono', monospace; padding:8px 10px; background:#fff; border: var(--px) solid var(--wood-dark); box-shadow: inset var(--px) var(--px) 0 var(--paper-dark); color:var(--ink); }
   textarea { min-height: 72px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
-  button { font: inherit; font-size:20px; border: var(--px) solid var(--wood-dark); padding:8px 16px; cursor:pointer; color:#fff; background:var(--green); box-shadow: var(--px) var(--px) 0 var(--wood-dark), inset 0 var(--px) 0 rgba(255,255,255,.35), inset 0 calc(var(--px)*-1) 0 rgba(0,0,0,.25); text-shadow: 1px 1px 0 rgba(0,0,0,.4); }
+  button { font: 600 15px/1.3 'IBM Plex Mono', monospace; border: var(--px) solid var(--wood-dark); padding:8px 16px; cursor:pointer; color:#fff; background:var(--green); box-shadow: var(--px) var(--px) 0 var(--wood-dark), inset 0 var(--px) 0 rgba(255,255,255,.35), inset 0 calc(var(--px)*-1) 0 rgba(0,0,0,.25); text-shadow: 1px 1px 0 rgba(0,0,0,.4); }
   button:active { transform: translate(var(--px), var(--px)); box-shadow: 0 0 0 var(--wood-dark), inset 0 var(--px) 0 rgba(0,0,0,.2); }
   button.secondary { background:var(--wood-light); }
   button.big { font: 700 28px/1.2 'Handjet', monospace; padding:14px 26px; background:var(--gold); color:var(--wood-dark); text-shadow:none; }
   button:disabled { opacity:.6; cursor:wait; }
   .out { display:none; } .out.show { display:block; }
-  .line { font: 17px/1.5 ui-monospace, monospace; background:#fff; border: var(--px) dashed var(--wood); padding:10px; word-break:break-all; }
+  .line { font: 14px/1.5 'IBM Plex Mono', monospace; background:#fff; border: var(--px) dashed var(--wood); padding:10px; word-break:break-all; }
   .ok { color:var(--green); } .bad { color:var(--red); }
-  table { width:100%; border-collapse:collapse; font-size:20px; margin-top:10px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin-top:10px; }
   td, th { text-align:left; padding:6px; border-bottom: 2px solid var(--paper-dark); vertical-align:top; }
   th { background: var(--paper-dark); color: var(--wood-dark); }
   td.miss { color:var(--red); font-weight:600; }
   details { margin-top:10px; } summary { cursor:pointer; color:var(--wood); font-weight:600; }
   summary::marker { color: var(--gold-dark); }
   ol, ul { padding-left: 22px; } li { margin: 6px 0; }
-  code, kbd { background:#fff; border: 2px solid var(--paper-dark); padding:0 5px; font: 16px/1.3 ui-monospace, monospace; }
+  code, kbd { background:#fff; border: 2px solid var(--paper-dark); padding:0 5px; font: 13px/1.3 'IBM Plex Mono', monospace; }
   kbd { border-color: var(--wood-light); box-shadow: 0 2px 0 var(--wood-light); }
-  .hint { color:#5d4d38; font-size:19px; }
+  .hint { color:#5d4d38; font-size:13.5px; }
   .warn { background:var(--gold); border: var(--px) solid var(--gold-dark); box-shadow: var(--px) var(--px) 0 var(--gold-dark); padding:8px 12px; color:var(--wood-dark); }
   a { color: var(--green); }
 
@@ -94,9 +93,9 @@
   .donate .donate-ico { flex:none; }
   .donate .donate-text { flex:1; min-width: 220px; display:flex; flex-direction:column; gap:2px; }
   .donate b { font: 700 28px/1.1 'Handjet', monospace; color: var(--wood-dark); }
-  .donate span { color: var(--wood-dark); font-size: 19px; }
-  .donate code.wallet { display:inline-block; margin-top:4px; background:#fff; border: 2px solid var(--gold-dark); padding:4px 8px; font: 15px/1.3 ui-monospace, monospace; word-break: break-all; }
-  .donate button { background: var(--red); font-size: 22px; }
+  .donate span { color: var(--wood-dark); font-size: 14px; }
+  .donate code.wallet { display:inline-block; margin-top:4px; background:#fff; border: 2px solid var(--gold-dark); padding:4px 8px; font: 13px/1.3 'IBM Plex Mono', monospace; word-break: break-all; }
+  .donate button { background: var(--red); }
   @keyframes glow { from { box-shadow: 0 0 0 var(--px) var(--gold-dark), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark), 0 0 0 0 rgba(242,201,76,.0); } to { box-shadow: 0 0 0 var(--px) var(--gold-dark), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark), 0 0 18px 6px rgba(255,224,138,.75); } }
   @media (prefers-reduced-motion: reduce) { .donate { animation: none; } }
   /* coffee sign: a hanging wooden board */
@@ -107,18 +106,18 @@
   .coffee .coffee-close { position:absolute; top:-10px; right:-10px; width:26px; height:26px; padding:0; line-height:20px; font-size:20px; background:var(--red); border: var(--px) solid var(--wood-dark); box-shadow: var(--px) var(--px) 0 var(--wood-dark); }
   .coffee .coffee-bye[hidden] { display:none; }
   .coffee .coffee-close { z-index:2; }
-  .coffee .coffee-bye { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px; background:var(--wood); color:var(--paper); font-size:20px; }
+  .coffee .coffee-bye { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px; background:var(--wood); color:var(--paper); font-size:14px; }
   .coffee .coffee-bye .sad { animation: tear .9s ease-in-out infinite alternate; }
   @keyframes tear { from { transform: translateY(0); } to { transform: translateY(2px); } }
   .coffee { background:var(--wood); color:var(--paper); padding:14px 14px 12px; border: var(--px) solid var(--wood-dark); box-shadow: 0 0 0 var(--px) var(--wood-light), calc(var(--px)*2) calc(var(--px)*2) 0 var(--px) var(--wood-dark); display:flex; flex-direction:column; gap:8px; }
   .coffee { outline: var(--px) solid var(--gold); outline-offset: calc(var(--px)*2); }
   .coffee::before { content:""; position:absolute; left:50%; top:-14px; width:4px; height:14px; margin-left:-2px; background:var(--wood-dark); box-shadow: -40px 0 0 var(--wood-dark), 40px 0 0 var(--wood-dark); }
-  .coffee b { color:var(--gold); font: 600 23px/1.2 'Handjet', monospace; display:flex; align-items:center; gap:8px; }
-  .coffee code { display:block; font: 13px/1.4 ui-monospace, monospace; word-break: break-all; background:var(--paper); color:var(--ink); padding:6px 8px; border:0; }
+  .coffee b { color:var(--gold); font: 700 28px/1.1 'Handjet', monospace; display:flex; align-items:center; gap:8px; }
+  .coffee code { display:block; font: 12px/1.4 'IBM Plex Mono', monospace; word-break: break-all; background:var(--paper); color:var(--ink); padding:6px 8px; border:0; }
   .coffee .row { margin:0; }
-  .coffee button { padding:6px 10px; font-size:18px; }
+  .coffee button { padding:6px 10px; }
   @media (max-width: 720px) { .coffee { width:auto; right:12px; } .coffee code.wallet { font-size:12px; } }
-  @media (max-width: 720px) { h1 { font-size:30px; } body { font-size:21px; } }
+  @media (max-width: 720px) { h1 { font-size:30px; } }
 </style>
 </head>
 <body>
@@ -215,7 +214,7 @@
     <p data-i18n="s3battle"><b>Battle</b> is a separate button. Press it when you want to fight: the bot walks to the arena, starts a run, moves, dodges and picks perks, and keeps starting new runs until energy drops under 5, the daily loot cap is full, or you press <b>Stop battle</b>. Farming pauses while battle mode runs and resumes afterwards. A run costs 5 energy; the panel shows how much energy today's animal meals still need, so you can decide for yourself.</p>
     <p data-i18n="s3toggles">Toggles in the Bot tab:</p>
     <ul data-i18n="s3togglelist">
-      <li><b>keep energy for meals</b> (on by default): planting waits while energy minus 2 would drop under what today's remaining animal meals need, 2 per animal building per meal still to come. With three buildings in the morning that is 12, so 11 energy plants nothing and the status says why. Turn it off to plant whenever you have 2 energy; hungry animals are still fed first.</li>
+      <li><b>keep energy for meals</b> (off by default): when on, planting waits while energy minus 2 would drop under what today's remaining animal meals need: 2 per animal building for each meal still to come (two meals before noon, one after). Six buildings in the afternoon is 6 × 1 × 2 = 12. The status shows that arithmetic. Off, the bot plants whenever it has 2 energy; hungry animals are still fed first.</li>
       <li><b>batch fields</b> (on by default): when two or more fields are ready or empty, the bot uses the game's own Harvest all / Plant all, which costs 2 energy for the whole batch instead of 2 per field. Each field in a plant batch still gets its own crop.</li>
       <li><b>feed first</b> (Planner tab, on by default): the bot reads how much your animals eat per day and how many bags and grain are in the silo. While stock covers less than the days you set, every empty field grows wheat or corn, whichever is shorter, counting fields already growing grain. Once covered, the field gets the crop you chose. Grain is mixed into bags automatically. So with 320 bags a day the bot keeps roughly three wheat and three corn fields busy and gives the rest to your best crop.</li>
       <li><b>auto-buy energy</b> (off by default): when energy runs low, buy more with tokens, and a checkbox for each reason it may buy for: <b>meals</b> (today's remaining animal meals), <b>waiting harvests</b> (ready crops, ripe fruit, products, a full mine, today's oil), <b>extra crop cycles</b> (only while they fit under today's harvest cap, as many as the day has time for, and only if a cycle earns at least 1.5× its energy cost; silo crops never count), and <b>battle runs</b> (between arena runs, 5 more while the loot cap is open and the last run paid at least 1.5× the price). Buys 10 to 60 at a time, at most 300 a day in total, never more than half the wallet. Bought energy never expires in the game.</li>
@@ -331,7 +330,7 @@
       s3does: 'Mỗi vòng, phần làm nông tự làm theo thứ tự: cho thú đói ăn (con sắp chết đói trước), thu sản phẩm, thu hoạch ruộng đã chín, hái quả chín trong vườn, bơm dầu ở giếng dầu mỗi ngày một lần, thu quặng ở mỏ khi đã đầy hai xe, trồng lại ruộng trống theo kế hoạch của bạn, và thu thu nhập làng. Nó không bao giờ tự đi đấu trường.',
       s3battle: '<b>Battle</b> là một nút riêng. Bấm khi bạn muốn đánh: bot đi đến đấu trường, bắt đầu một trận, tự di chuyển, né đòn và chọn perk, rồi tiếp tục mở trận mới cho đến khi năng lượng xuống dưới 5, giới hạn chiến lợi phẩm trong ngày đã đầy, hoặc bạn bấm <b>Stop battle</b>. Phần làm nông tạm dừng trong lúc chế độ đánh chạy và tiếp tục sau đó. Một trận tốn 5 năng lượng; bảng hiển thị các bữa ăn của thú hôm nay còn cần bao nhiêu năng lượng để bạn tự quyết định.',
       s3toggles: 'Các công tắc trong thẻ Bot:',
-      s3togglelist: `<li><b>keep energy for meals</b> (mặc định bật): việc trồng sẽ chờ khi năng lượng trừ 2 tụt xuống dưới mức các bữa ăn còn lại trong ngày của thú cần, 2 cho mỗi chuồng cho mỗi bữa còn lại. Với ba chuồng vào buổi sáng là 12, nên 11 năng lượng sẽ không trồng gì và dòng trạng thái sẽ nói rõ lý do. Tắt đi để trồng bất cứ khi nào có 2 năng lượng; thú đói vẫn được cho ăn trước.</li>
+      s3togglelist: `<li><b>keep energy for meals</b> (mặc định tắt): khi bật, việc trồng sẽ chờ khi năng lượng trừ 2 tụt xuống dưới mức các bữa ăn còn lại trong ngày của thú cần: 2 cho mỗi chuồng cho mỗi bữa còn lại (hai bữa trước trưa, một bữa sau trưa). Sáu chuồng vào buổi chiều là 6 × 1 × 2 = 12. Dòng trạng thái hiển thị phép tính đó. Khi tắt, bot trồng bất cứ khi nào có 2 năng lượng; thú đói vẫn được cho ăn trước.</li>
 <li><b>batch fields</b> (mặc định bật): khi có từ hai ruộng trở lên đã chín hoặc đang trống, bot dùng chính chức năng Harvest all / Plant all của game, chỉ tốn 2 năng lượng cho cả đợt thay vì 2 cho mỗi ruộng. Mỗi ruộng trong đợt trồng vẫn được chọn cây riêng.</li>
 <li><b>feed first</b> (thẻ Planner, mặc định bật): bot đọc lượng thức ăn thú ăn mỗi ngày và số bao, số hạt đang có trong silo. Khi dự trữ chưa đủ số ngày bạn đặt, mỗi ruộng trống sẽ trồng lúa mì hoặc ngô, loại nào đang thiếu hơn, có tính cả các ruộng đang trồng hạt. Khi đã đủ, ruộng sẽ trồng cây bạn chọn. Hạt được trộn thành bao tự động. Ví dụ với 320 bao mỗi ngày, bot giữ khoảng ba ruộng lúa mì và ba ruộng ngô, phần còn lại dành cho cây có giá tốt nhất.</li>
 <li><b>auto-buy energy</b> (mặc định tắt): khi năng lượng sắp hết, mua thêm bằng token, với một ô chọn cho từng lý do được phép mua: <b>meals</b> (các bữa ăn còn lại trong ngày của thú), <b>waiting harvests</b> (ruộng chín, quả chín, sản phẩm, mỏ đầy, dầu trong ngày), <b>extra crop cycles</b> (chỉ khi còn vừa trong giới hạn thu hoạch hôm nay, chỉ đủ số chu kỳ mà thời gian còn cho phép, và chỉ khi một chu kỳ mang về ít nhất 1,5 lần chi phí năng lượng; cây cho silo không tính), và <b>battle runs</b> (giữa các trận, mua thêm 5 khi giới hạn chiến lợi phẩm còn mở và trận trước mang về ít nhất 1,5 lần giá). Mỗi lần mua 10 đến 60, tối đa 300 mỗi ngày tính chung, không quá nửa ví. Trong game, năng lượng đã mua không bao giờ hết hạn.</li>
