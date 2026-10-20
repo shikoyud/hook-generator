@@ -28,7 +28,7 @@ const bundles = existsSync(up) ? readdirSync(up).filter((f) => /^game-[\w-]+\.js
 for (const f of bundles) {
   test(`findNames resolves all ${ORDER.length} names in ${f}`, () => {
     const r = findNames(readFileSync(new URL(f, up), 'utf8'));
-    assert.deepEqual(r.missing, []);
+    assert.deepEqual(r.missing, []); // optional names (newer features) may be absent in older builds
     assert.ok(r.line.startsWith('window.__fs={q'));
   });
 }

@@ -7,8 +7,11 @@ const esc = (s) => s.replace(/\$/g, '\\$');
 
 export const ORDER = [
   'q', 'U', 'Ca', 'Pg', 'jf', 'W', 'or', 'wr', 'Or', 'te', 'hr', 'de', 'je', 'Ae', 'Fe',
-  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap', 'animalsPer',
+  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap', 'animalsPer', 'fishTable', 'fishScale', 'fishBase', 'baitPrice',
 ];
+
+// Names added for newer game features. Older builds lack them; the bot then skips that feature.
+export const OPTIONAL = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice']);
 
 export const WHAT = {
   q: 'farm store (farm, visiting, op)',
@@ -37,6 +40,10 @@ export const WHAT = {
   feedPerMeal: 'feed bags one animal eats per meal',
   battleCap: 'daily arena loot cap',
   animalsPer: 'animals one building holds at a level',
+  fishTable: 'fish species with catch chance and value range',
+  fishScale: 'divisor for fish value',
+  fishBase: 'fish value base for this farm',
+  baitPrice: 'token price of one bait',
 };
 
 /**
@@ -116,10 +123,17 @@ function findNamesRaw(src) {
   // animalsPer: building capacity, from the animal→building assignment `Math.floor(r/ee(Kn(t.kind),e.level))`
   names.animalsPer = find('animalsPer', new RegExp(`Math\\.floor\\(r/(${ID})\\(${ID}\\(t\\.kind\\),e\\.level\\)\\)`));
 
+  // fish catch: `let[,n,r]=ra(e.owner,t),i=he(),a=pe(),...l=Math.round(na(e)*(s.lo+r*(s.hi-s.lo))/a)`
+  [names.fishTable, names.fishScale, names.fishBase] = findAll('fishTable/fishScale/fishBase', new RegExp(`let\\[,n,r\\]=${ID}\\(e\\.owner,t\\),i=(${ID})\\(\\),a=(${ID})\\(\\)[\\s\\S]{0,260}?l=Math\\.round\\((${ID})\\(e\\)\\*\\(s\\.lo\\+r\\*\\(s\\.hi-s\\.lo\\)\\)/a\\)`));
+  // bait: `let o=ta(e)*t;return ar(e,o,`normal`)?(i.bait+=t`
+  names.baitPrice = find('baitPrice', new RegExp(`let o=(${ID})\\(e\\)\\*t;return ${ID}\\(e,o,\`normal\`\\)\\?\\(i\\.bait\\+=t`));
+
   for (const k of ORDER) if (!names[k]) names[k] = null;
   const found = ORDER.filter((k) => names[k]);
   const line = `window.__fs={${found.map((k) => (names[k] === k ? k : `${k}:${names[k]}`)).join(',')}};`;
-  return { names, line, missing, complete: missing.length === 0 };
+  const isOptional = (m) => m.split(':')[0].split('/').every((k) => OPTIONAL.has(k.trim()));
+  const required = missing.filter((m) => !isOptional(m));
+  return { names, line, missing: required, optionalMissing: missing.filter(isOptional), complete: required.length === 0 };
 }
 
 /** Pull every /assets/*.js reference out of HTML or JS text. */

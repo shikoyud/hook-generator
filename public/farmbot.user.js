@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.3.0
+// @version      0.4.0
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -53,6 +53,13 @@
     feedFirst: true, // grow wheat/corn for the silo until feed covers feedDaysAhead, then the plan's crop
     feedExtraDays: 0, // on top of today's remaining meals, keep this many extra days of feed
     mixFeed: true, // mix grain into bags automatically (costs no energy)
+    // fishing (no energy: only bait, bought with tokens)
+    fishing: true, // use the pond's Fish all with the bait you have
+    buyBait: false, // buy bait when a cast is worth more than baitMargin × its price and the cap has room
+    baitMargin: 1.5,
+    chopFish: true, // chop crate fish into feed bags, only as many as today's feed needs
+    fishCastsPerDay: 20, // game limits: 20 casts and 20 bait bought per day
+    baitPerDay: 20,
     // energy purchases (see Core.energyPlan)
     autoEnergy: false, // master switch; the reasons below pick what energy may be bought for
     energyForMeals: true, // today's remaining animal meals
@@ -206,7 +213,10 @@
       const pairs = Math.min(wheat, corn);
       const coverBags = bags + pairs * 10;
       const target = remainingToday + dailyNeed * (cfg.feedExtraDays ?? 0);
-      const mixes = Math.max(0, Math.ceil((target - coverBags) / 10));
+      // fish in the crate chop into 8 bags each (no energy); counted when chopping is on
+      const crate = (farm.fishing && farm.fishing.stock) || 0;
+      const chop = siloOk && cfg.chopFish !== false ? Math.min(crate, Math.ceil(Math.max(0, target - coverBags) / 8)) : 0;
+      const mixes = Math.max(0, Math.ceil((target - coverBags - chop * 8) / 10));
       let wheatNeed = Math.max(0, mixes - (wheat - pairs));
       let cornNeed = Math.max(0, mixes - (corn - pairs));
       let growingW = 0, growingC = 0;
@@ -224,9 +234,83 @@
       return {
         siloOk, dailyNeed, remainingToday, bags, wheat, corn, pairs, coverBags, target,
         daysCovered: dailyNeed ? coverBags / dailyNeed : Infinity,
-        mixes, wheatNeed, cornNeed, growingW, growingC, capacityLeft, next,
+        mixes, wheatNeed, cornNeed, growingW, growingC, capacityLeft, next, crate, chop,
         shouldMix: siloOk && pairs >= 1 && bags < target,
       };
+    },
+
+    // Today's fishing state from farm.fishing, same rules as the game: counters reset when
+    // the farm day changes; 20 casts and 20 bait purchases a day.
+    fishingState(farm, now, cfg = {}) {
+      const f = farm.fishing || {};
+      const today = Core.mealWindow(now, farm.tz).slice(0, 10);
+      const fresh = f.day !== today;
+      const casts = fresh ? 0 : f.casts || 0, bought = fresh ? 0 : f.bought || 0;
+      const ponds = farm.structures.filter((s) => s.kind === 'pond' && Core.isBuilt(s, now));
+      return {
+        rod: !!f.rod, bait: f.bait || 0, stock: f.stock || 0, line: f.line || null,
+        castsLeft: Math.max(0, (cfg.fishCastsPerDay ?? 20) - casts),
+        buyLeft: Math.max(0, (cfg.baitPerDay ?? 20) - bought),
+        pond: ponds[0] || null, caught: f.caught || 0, book: f.book || {},
+      };
+    },
+
+    // Expected tokens per cast, from the game's fish table: value = base × (lo..hi) / scale,
+    // species picked by cumulative chance (the last one takes any leftover probability).
+    fishingEV(farm, h) {
+      if (!h.fishTable || !h.fishScale || !h.fishBase) return null;
+      const table = h.fishTable() || [];
+      if (!table.length) return null;
+      const base = h.fishBase(farm), scale = h.fishScale() || 1;
+      let ev = 0, used = 0;
+      table.forEach((f, i) => {
+        const p = i === table.length - 1 ? Math.max(0, 1 - used) : Math.min(f.chance, Math.max(0, 1 - used));
+        used += p;
+        ev += p * ((f.lo + f.hi) / 2);
+      });
+      const legend = table.find((f) => f.size === 'legendary');
+      return { perCast: (base * ev) / scale, legend, legendChance: legend ? legend.chance : 0 };
+    },
+
+    // What to do at the pond this round. Pure; the caller runs the ops.
+    //  reel     -> a manual line is in the water and has bitten: reel it (a farmer job)
+    //  buyBait  -> bait to buy first (only if a cast pays and the harvest cap has room)
+    //  fishAll  -> pond id: use every bait up to today's casts in one op (no energy)
+    //  chop     -> crate fish to chop into feed for today's meals
+    fishPlan({ farm, now, h, cfg, feed }) {
+      const st = Core.fishingState(farm, now, cfg);
+      const out = { state: st, reel: null, buyBait: 0, fishAll: null, chop: 0, reason: '' };
+      if (feed && feed.chop > 0) out.chop = feed.chop;
+      if (cfg.fishing === false) return { ...out, reason: 'fishing off' };
+      if ((farm.level ?? 1) < 3) return { ...out, reason: 'fishing opens at Town Hall Lv 3' };
+      if (!st.pond) return { ...out, reason: 'no pond built' };
+      if (!st.rod) return { ...out, reason: 'no fishing rod yet (buy one in the pond window)' };
+      if (st.line) {
+        if (now >= st.line.bite - 1500) out.reel = st.line.pondId;
+        return { ...out, reason: out.reel ? 'reeling the line you cast' : 'your line is in the water, waiting for a bite' };
+      }
+      if (!st.castsLeft) return { ...out, reason: 'no casts left today' };
+      const ev = Core.fishingEV(farm, h);
+      if (cfg.buyBait && st.bait < st.castsLeft && st.buyLeft > 0 && ev && h.baitPrice) {
+        const price = h.baitPrice(farm);
+        const proj = h.cap ? Core.incomeProjection(farm, now, h) : null;
+        const room = proj ? proj.room : Infinity;
+        if (ev.perCast < cfg.baitMargin * price) out.reason = `a cast is worth ${ev.perCast.toFixed(1)}, bait costs ${price}: not worth it`;
+        else if (room <= 0) out.reason = 'harvest cap is full: no bait bought (fish would only go to the crate)';
+        else {
+          const wallet = Math.max(0, (farm.tokens || 0) - (cfg.energyTokenKeep || 0));
+          const budget = Math.floor(wallet * (cfg.energyTokenFraction ?? 0.5));
+          let n = Math.min(st.castsLeft - st.bait, st.buyLeft, Math.max(1, Math.floor(room / ev.perCast)), Math.floor(budget / price));
+          if (n > 0) out.buyBait = n;
+          else out.reason = `wallet too low for bait (budget ${budget})`;
+        }
+      }
+      const baitAfter = st.bait + out.buyBait;
+      if (baitAfter > 0) {
+        out.fishAll = st.pond.id;
+        out.reason = `fish all: ${Math.min(baitAfter, st.castsLeft)} cast(s)`;
+      } else if (!out.reason) out.reason = 'no bait';
+      return out;
     },
 
     // Same as mealReserve, with the pieces: buildings with animals, meals left today per
@@ -302,6 +386,11 @@
         const id = hungry[0].a.id;
         return { job: { type: 'feed', animalId: id }, key: `feed:${id}`, why: 'hungry' };
       }
+      // a line cast by hand has bitten: reel it in (no energy; the farmer walks to the pond)
+      const line = farm.fishing && farm.fishing.line;
+      if (line && now >= line.bite - 1500 && free(`pond:${line.pondId}`)) {
+        return { job: { type: 'reel', structureId: line.pondId }, key: `pond:${line.pondId}`, why: 'fish on the line' };
+      }
       if (energy < 2) return null;
 
       const ready = farm.animals.find((a) => a.productReady && free(`collect:${a.id}`));
@@ -342,6 +431,7 @@
           }
         }
       }
+
 
       const reserve = cfg.plantKeepsReserve === false ? 0 : Core.mealReserve(farm, now, h);
       if (energy - 2 < reserve) return null;
@@ -837,7 +927,7 @@
   // -------------------------------------------------------------- GAME HOOK
   let G = null; // window.__fs
   let hookProblems = [];
-  const stats = { flags: 0, lastFlag: '', jobs: 0, bulk: 0, refused: 0, battles: 0, claims: 0, claimed: 0, energyBought: 0, energySpent: 0 };
+  const stats = { flags: 0, lastFlag: '', jobs: 0, bulk: 0, refused: 0, battles: 0, claims: 0, claimed: 0, energyBought: 0, energySpent: 0, fish: 0, fishTokens: 0, baitBought: 0, chopped: 0, legends: 0 };
 
   const isFn = (v) => typeof v === 'function';
   const HOOK_CHECKS = {
@@ -867,6 +957,10 @@
     feedPerMeal: (v) => isFn(v) && v.length === 1,
     battleCap: (v) => isFn(v) && v.length === 1,
     animalsPer: (v) => isFn(v) && v.length === 2,
+    fishTable: (v) => isFn(v) && Array.isArray(v()) && v().length > 0 && 'chance' in v()[0] && 'lo' in v()[0],
+    fishScale: (v) => isFn(v) && typeof v() === 'number',
+    fishBase: (v) => isFn(v) && v.length === 1,
+    baitPrice: (v) => isFn(v) && v.length === 1,
   };
   const describe = (v) => {
     if (v === null) return 'null';
@@ -875,9 +969,11 @@
     if (Array.isArray(v)) return `array[${v.length}]`;
     return `object{${Object.keys(v).slice(0, 4).join(',')}}`;
   };
+  const OPTIONAL_HOOK = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice']);
   function validateHook(h) {
     const bad = [];
     for (const [k, test] of Object.entries(HOOK_CHECKS)) {
+      if (OPTIONAL_HOOK.has(k) && h[k] === undefined) continue;
       let ok = false;
       try {
         ok = !!test(h[k]);
@@ -932,6 +1028,10 @@
     feedPerMeal: G.feedPerMeal,
     battleCap: G.battleCap,
     animalsPer: G.animalsPer,
+    fishTable: G.fishTable,
+    fishScale: G.fishScale,
+    fishBase: G.fishBase,
+    baitPrice: G.baitPrice,
   });
 
   // ---------------------------------------------------------------- PLANNER
@@ -996,6 +1096,49 @@
     lastEnergyPlan: null,
     lastMixAt: 0,
     lastFeed: null,
+    lastFishAt: 0,
+    lastFishPlan: null,
+    fishBackoff: 0,
+    goFishing(farm, now) {
+      const h = helpers();
+      const feed = G.feedPerMeal ? Core.feedPlan(farm, now, h, cfg) : null;
+      const p = Core.fishPlan({ farm, now, h, cfg, feed });
+      this.lastFishPlan = p;
+      if (now < this.fishBackoff || now - this.lastFishAt < 60 * SEC) return;
+      if (!p.buyBait && !p.fishAll && !p.chop) return;
+      this.lastFishAt = now;
+      // All three are the pond / silo buttons' own ops: no energy, not farmer jobs.
+      if (p.buyBait) {
+        const r = G.q.op('buyBait', p.buyBait);
+        if (r.ok) {
+          stats.baitBought += p.buyBait;
+          log(`Bought ${p.buyBait} bait.`, 'good');
+        } else {
+          log(`Bait not bought: ${r.msg}`, 'bad');
+          if (/soon|Town Hall/i.test(r.msg || '')) this.fishBackoff = now + 30 * 60 * SEC;
+        }
+      }
+      if (p.fishAll && (G.q.farm.fishing?.bait || 0) > 0) {
+        const r = G.q.op('fishAll', p.fishAll);
+        if (r.ok) {
+          stats.fish += r.count || 0;
+          stats.fishTokens += r.gained || 0;
+          const legend = /golden|legend/i.test(r.msg || '');
+          if (legend) stats.legends++;
+          log(`${legend ? 'LEGENDARY! ' : ''}${r.msg}`, 'good');
+        } else {
+          log(`Fishing refused: ${r.msg}`, 'bad');
+          if (/soon|Town Hall|rod/i.test(r.msg || '')) this.fishBackoff = now + 30 * 60 * SEC;
+        }
+      }
+      if (p.chop) {
+        const r = G.q.op('chopFish', p.chop);
+        if (r.ok) {
+          stats.chopped += p.chop;
+          log(`Silo: chopped ${p.chop} crate fish into ${p.chop * 8} feed bags.`, 'good');
+        } else log(`Chopping refused: ${r.msg}`, 'bad');
+      }
+    },
     mixFeed(farm, now) {
       const fp = G.feedPerMeal ? Core.feedPlan(farm, now, helpers(), cfg) : null;
       this.lastFeed = fp;
@@ -1068,6 +1211,7 @@
       }
       const now = G.W.now();
       this.claimIncome(farm, now);
+      this.goFishing(farm, now);
       this.mixFeed(farm, now);
       this.buyEnergy(farm, now);
       this.lastProj = G.cap ? Core.incomeProjection(farm, now, helpers()) : null;
@@ -1698,6 +1842,26 @@ ${cb('energyForBattle', 'battle runs', 'Between runs, 5 more while the loot cap 
 <div class="ctl">${cb('energyTopUp', 'buy ahead for the cycles of the day', 'Off: buy just the shortfall, rounded up to the minimum (10). On: when a purchase happens, also cover the crop cycles that still fit under the cap today, so buys are bigger and rarer.', !cfg.autoEnergy)}</div>
 ${row('Plan', this.esc(energyLine), cfg.autoEnergy && Farm.lastEnergyPlan && Farm.lastEnergyPlan.buy ? 'good' : '')}
 ${farm && G.energyPrice ? row('Price', `${(G.energyPrice(farm, 10) / 10).toFixed(2)} tokens each`) + row('Bought today / total', `${Farm.boughtToday} / ${stats.energyBought} (${n(stats.energySpent)} tokens)`) + row('Amount', cfg.energyTopUp ? `shortfall + cycles ahead, ${cfg.energyMinBuy}–${cfg.energyMaxBuy} per buy` : `the shortfall, rounded up to ${cfg.energyMinBuy} (max ${cfg.energyMaxBuy})`) + row('Limits', `${cfg.energyMaxPerDay}/day · ≤${Math.round(cfg.energyTokenFraction * 100)}% of wallet · cycles need ${cfg.energyMargin}× their cost`) : ''}`)}
+
+${sec('fish', `Fishing${farm && farm.fishing ? ` · ${Core.fishingState(farm, now, cfg).castsLeft} casts left` : ''}`, (() => {
+  if (!farm) return '<p class="hint">waiting for your farm…</p>';
+  const st = Core.fishingState(farm, now, cfg);
+  const ev = Core.fishingEV(farm, helpers());
+  const price = G.baitPrice ? G.baitPrice(farm) : null;
+  const fp = Farm.lastFishPlan;
+  const legend = ev && ev.legend ? ev.legend : null;
+  const landed = legend && st.book[legend.id] && st.book[legend.id].n;
+  return `<div class="ctl">${cb('fishing', 'go fishing', 'Use the pond\'s Fish all with the bait you have. Fishing costs no energy.')}
+${cb('buyBait', 'buy bait when it pays', `Buy bait only when a cast is worth at least ${cfg.baitMargin}× the bait price and today\'s harvest cap still has room; never more than today\'s casts.`)}
+${cb('chopFish', 'chop crate fish for feed', 'When the cap is full, fish go to the crate. Chop only as many as today\'s animal meals need (8 bags each); the rest stay for the market.')}</div>`
+    + row('Now', this.esc(fp ? fp.reason : '–'), fp && fp.fishAll ? 'good' : '')
+    + row('Rod / bait', `${st.rod ? 'yes' : 'no'} · ${st.bait} bait · ${st.buyLeft} more can be bought today`)
+    + row('Casts left today', `${st.castsLeft} / ${cfg.fishCastsPerDay}`)
+    + row('Fish crate', `${st.stock} fish (${st.stock * 8} bags as feed)`)
+    + (ev ? row('A cast is worth', `~${ev.perCast.toFixed(1)} tokens${price != null ? ` · bait ${price}` : ''}`, price != null && ev.perCast >= cfg.baitMargin * price ? 'good' : '') : '<p class="hint">fish table not in hook: regenerate the hook line</p>')
+    + (legend ? row(legend.name, landed ? `landed ${landed}×` : `not caught yet (~1 in ${Math.round(1 / Math.max(legend.chance, 1e-6))} casts)`, landed ? 'good' : '') : '')
+    + row('Caught by bot', `${stats.fish} fish · ${n(stats.fishTokens)} tokens · ${stats.chopped} chopped${stats.legends ? ` · ${stats.legends} legendary` : ''}`);
+})())}
 
 ${sec('cap', `Harvest cap today${proj ? ` · ${n(proj.total)} / ${n(proj.cap)}` : ''}`, !farm ? '<p class="hint">waiting for your farm…</p>' : proj ? row('Earned', n(proj.earned)) + (proj.carry ? row('Carried to tomorrow', n(proj.carry)) : '') + row('Ready / growing crops', `${n(proj.ready)} / ${n(proj.growing)}`) + row('Orchard fruit', n(proj.trees)) + row('Animal products', n(proj.animals)) + row('Room for cash crops', proj.total >= proj.cap ? 'none: silo crops only' : n(proj.room), proj.total >= proj.cap ? 'bad' : 'good') + row('Silo', proj.siloOk ? 'has room' : 'full or missing') : '<p class="hint">cap function not in hook: regenerate the hook line</p>')}
 

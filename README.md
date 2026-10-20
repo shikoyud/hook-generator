@@ -53,6 +53,10 @@ Optional: the environment variable `GAME_ORIGIN` overrides the game site if it e
 Pretty-printed copies (saved from DevTools with the `{}` button) are matched on a
 whitespace-collapsed copy automatically.
 
+The fishing names (`fishTable`, `fishScale`, `fishBase`, `baitPrice`) are optional: builds
+before the pond update lack them, the line is generated without them, and the bot skips the
+fishing value checks.
+
 `ok: false` with `missing` listed means the game code changed around an anchor; the returned
 line is partial. Each anchor in `public/anchors.js` is a string literal or code shape that sits
 next to the name; search the bundle for that literal, read the name beside it, fix the regex.
