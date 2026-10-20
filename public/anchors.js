@@ -7,7 +7,7 @@ const esc = (s) => s.replace(/\$/g, '\\$');
 
 export const ORDER = [
   'q', 'U', 'Ca', 'Pg', 'jf', 'W', 'or', 'wr', 'Or', 'te', 'hr', 'de', 'je', 'Ae', 'Fe',
-  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap',
+  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap', 'animalsPer',
 ];
 
 export const WHAT = {
@@ -36,13 +36,28 @@ export const WHAT = {
   energyPrice: 'token price of n energy',
   feedPerMeal: 'feed bags one animal eats per meal',
   battleCap: 'daily arena loot cap',
+  animalsPer: 'animals one building holds at a level',
 };
 
 /**
  * @param {string} src bundle text
  * @returns {{names: Record<string,string>, line: string, missing: string[]}}
  */
-export function findNames(src) {
+
+// Pretty-printed copies (DevTools "{}" or a formatter) put whitespace around punctuation; the
+// anchors are written for the minified text, so collapse that whitespace first when needed.
+export function normalize(src) {
+  return src.replace(/\s*([=(){}\[\],;:?<>!&|+\-*/%])\s*/g, '$1');
+}
+
+export function findNames(input) {
+  const first = findNamesRaw(input);
+  if (first.complete || !/\n/.test(input.slice(0, 5000))) return first;
+  const second = findNamesRaw(normalize(input));
+  return second.missing.length < first.missing.length ? { ...second, normalized: true } : first;
+}
+
+function findNamesRaw(src) {
   const names = {};
   const missing = [];
   const find = (key, re, group = 1) => {
@@ -77,7 +92,7 @@ export function findNames(src) {
     new RegExp(`let i=(${ID})\\.map\\(t=>\`\\s*<button class="seed [\\s\\S]{0,400}?\\$\\{(${ID})\\(t\\.id\\)\\?\`silo · 5 bags\`:\`\\+\\$\\{${ID}\\((${ID})\\(e,t\\)\\)\\}\``)
   );
   names.je = find('je', new RegExp(`let t=(${ID})\\.map\\(t=>\`<button class="seed" data-action="plant-tree"`));
-  names.Ae = find('Ae', new RegExp(`A \\$\\{(${ID})\\[r\\.kind\\]\\.name\\.toLowerCase\\(\\)\\} died after 24 hours`));
+  names.Ae = find('Ae', new RegExp(`A \\$\\{(${ID})\\[r\\.kind\\]\\.name\\.toLowerCase\\(\\)\\}\\s*died after 24 hours`));
   names.Fe = find('Fe', new RegExp(`t\\.kind in (${ID})&&e\\.animals\\.some\\(`));
   names.cap = find('cap', new RegExp(`Math\\.min\\(n,(${ID})\\(e\\)-e\\.today\\.harvestEarned\\)`));
   names.dr = find('dr', new RegExp(`let s=(${ID})\\(e,i\\.kind\\),c=${ID}\\(e,s\\);i\\.productReady=!1`));
@@ -97,6 +112,9 @@ export function findNames(src) {
 
   // battleCap: `Ri=e=>Math.max(0,Ii(e)-(e.today.battleEarned??0))` -> Ii
   names.battleCap = find('battleCap', new RegExp(`e=>Math\\.max\\(0,(${ID})\\(e\\)-\\(e\\.today\\.battleEarned\\?\\?0\\)\\)`));
+
+  // animalsPer: building capacity, from the animal→building assignment `Math.floor(r/ee(Kn(t.kind),e.level))`
+  names.animalsPer = find('animalsPer', new RegExp(`Math\\.floor\\(r/(${ID})\\(${ID}\\(t\\.kind\\),e\\.level\\)\\)`));
 
   for (const k of ORDER) if (!names[k]) names[k] = null;
   const found = ORDER.filter((k) => names[k]);

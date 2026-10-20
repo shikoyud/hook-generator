@@ -76,7 +76,9 @@
     maxWave: 30,
     keepAliveMin: 20,
     keepAliveMax: 45,
-    perkPriority: [],
+    // perk order: survive first (less damage, more dodges), then kill faster
+    perkPriority: ['guard', 'dash', 'blade', 'haste', 'reach', 'swift', 'crit', 'storm', 'thorns', 'magnet'],
+    battleCautionHp: 0.35, // below this share of max HP the hero kites instead of pressing in
     mortarRadius: 30, // game hurts within 18 px of a marker; keep a margin
     projectileMargin: 16, // extra clearance beyond the game's 6/8 px hit radius
     projectileHorizon: 1.4, // seconds ahead to look for incoming shots
@@ -138,18 +140,33 @@
 
     isBuilt: (o, now) => !o.buildUntil || now >= o.buildUntil,
 
-    // Energy to keep for the remaining meals today (2 per animal building per unfed window).
-    mealReserve(farm, now, h) {
-      const win = Core.mealWindow(now, farm.tz);
-      const morning = win.endsWith('S');
-      let n = 0;
-      for (const s of farm.structures) {
-        const b = h.Fe[s.kind];
-        if (!b || !b.animal) continue;
-        if (!farm.animals.some((a) => a.kind === b.animal)) continue;
-        n += (s.fedWindow === win ? 0 : 1) + (morning ? 1 : 0);
+    // The game assigns the i-th animal of a kind to building floor(i / capacity) among that
+    // kind's buildings sorted by build time, and charges feeding/collecting once per building per
+    // window/day. Returns the occupied buildings with their animals.
+    occupiedBuildings(farm, h) {
+      const out = [];
+      const kinds = [...new Set(farm.animals.map((a) => a.kind))];
+      for (const kind of kinds) {
+        const bkind = Object.keys(h.Fe).find((k) => h.Fe[k] && h.Fe[k].animal === kind);
+        if (!bkind) continue;
+        const buildings = farm.structures.filter((s) => s.kind === bkind).sort((a, b) => (a.buildUntil ?? 0) - (b.buildUntil ?? 0));
+        if (!buildings.length) continue;
+        const animals = farm.animals.filter((a) => a.kind === kind);
+        const cap = h.animalsPer ? Math.max(1, h.animalsPer(bkind, farm.level)) : Infinity;
+        const groups = new Map();
+        animals.forEach((a, i) => {
+          const b = buildings[Math.min(buildings.length - 1, cap === Infinity ? 0 : Math.floor(i / cap))];
+          if (!groups.has(b)) groups.set(b, []);
+          groups.get(b).push(a);
+        });
+        for (const [b, list] of groups) out.push({ building: b, animals: list, kind });
       }
-      return n * 2;
+      return out;
+    },
+
+    // Energy to keep for the remaining meals today (2 per occupied animal building per unfed window).
+    mealReserve(farm, now, h) {
+      return Core.mealReserveDetail(farm, now, h).energy;
     },
 
     // Mine state, same arithmetic as the game: a cart every 6 h from the last collection
@@ -209,10 +226,7 @@
       const win = Core.mealWindow(now, farm.tz);
       const morning = win.endsWith('S');
       let buildings = 0, meals = 0;
-      for (const st of farm.structures) {
-        const b = h.Fe[st.kind];
-        if (!b || !b.animal) continue;
-        if (!farm.animals.some((a) => a.kind === b.animal)) continue;
+      for (const { building: st } of Core.occupiedBuildings(farm, h)) {
         buildings++;
         meals += (st.fedWindow === win ? 0 : 1) + (morning ? 1 : 0);
       }
@@ -424,6 +438,18 @@
       const free = (key) => !queued.has(key) && !(skip[key] > now);
       const energy = farm.today.energy;
       const min = cfg.bulkMin ?? 2;
+      // Animals: every hungry one in one burst (feed), every ready product in one burst (collect).
+      // The game charges 2 per building per meal whatever the order; the burst saves pacing.
+      const win = Core.mealWindow(now, farm.tz);
+      const hungry = farm.animals.filter((a) => h.wr(a, now, win).hungry && free(`feed:${a.id}`));
+      if (hungry.length >= min && (energy >= 2 || hungry.some((a) => (a.meals ?? 1) === 0))) {
+        const order = Core.occupiedBuildings(farm, h).flatMap((g) => g.animals).filter((a) => hungry.includes(a)).concat(hungry.filter((a) => !Core.occupiedBuildings(farm, h).some((g) => g.animals.includes(a))));
+        return { kind: 'feed', jobs: order.map((a) => ({ job: { type: 'feed', animalId: a.id }, key: `feed:${a.id}`, why: 'hungry' })) };
+      }
+      const products = farm.animals.filter((a) => a.productReady && free(`collect:${a.id}`));
+      if (products.length >= min && energy >= 2) {
+        return { kind: 'collect', jobs: products.map((a) => ({ job: { type: 'collect', animalId: a.id }, key: `collect:${a.id}`, why: 'product ready' })) };
+      }
       const built = farm.fields.filter((f) => Core.isBuilt(f, now) && free(`field:${f.id}`));
       const ready = built.filter((f) => h.or(f, now).state === 'ready');
       if (ready.length && cfg.waitForBatch && cfg.bulk) {
@@ -465,9 +491,8 @@
       const win = Core.mealWindow(now, farm.tz);
       let meals = 0;
       if (cfg.energyForMeals !== false) {
-        for (const st of farm.structures) {
-          const b = h.Fe[st.kind];
-          if (b && b.animal && st.fedWindow !== win && farm.animals.some((a) => a.kind === b.animal && !a.fedWindows.includes(win))) meals += 2;
+        for (const g of Core.occupiedBuildings(farm, h)) {
+          if (g.building.fedWindow !== win && g.animals.some((a) => !a.fedWindows.includes(win))) meals += 2;
         }
       }
       let need = 0;
@@ -481,10 +506,8 @@
         if (s.kind === 'oilwell' && Core.oilReady(s, now, farm.tz)) need += 2;
         if (s.kind === 'mine' && Core.mineState(s, now).carts >= (cfg.mineMinCarts ?? 2)) need += 2;
       }
-      const readyKinds = new Set(farm.animals.filter((a) => a.productReady).map((a) => a.kind));
-      for (const s of farm.structures) {
-        const b = h.Fe[s.kind];
-        if (b && b.animal && readyKinds.has(b.animal)) need += 2;
+      for (const g of Core.occupiedBuildings(farm, h)) {
+        if (g.animals.some((a) => a.productReady)) need += 2;
       }
       if (cfg.energyForWaiting === false) need = 0;
       out.waiting = need;
@@ -608,6 +631,60 @@
       }
       void onTop;
       return { vec: [vx / len, vy / len], nearest };
+    },
+
+    // Immediate melee-type threats that the game's own routine handles poorly:
+    //  - bomber in `fuse`: explodes 0.65 s after fusing, 38 px radius -> walk out, dash if close
+    //  - flyer (bat) in `windup`: lunges at the spot it locked -> step off that spot sideways
+    //  - low health: kite away from everything near, let auto-attack catch what follows
+    // enemies: [{x,y,state,brain,radius,alive,lock?}]; hero: {x,y,hpPct}
+    threatVector(hero, enemies, opts = {}) {
+      const caution = opts.cautionHp ?? 0.35;
+      let vx = 0, vy = 0, dash = false, dashVec = null, reasons = [];
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        const dx = hero.x - e.x, dy = hero.y - e.y, d = Math.hypot(dx, dy) || 1;
+        if (e.brain === 'bomber' && e.state === 'fuse' && d < 64) {
+          const w = 2 * (64 - d) / 64 + 1;
+          vx += (dx / d) * w;
+          vy += (dy / d) * w;
+          if (d < 44 && !dash) (dash = true), (dashVec = [dx / d, dy / d]);
+          reasons.push('bomb');
+        } else if (e.brain === 'flyer' && e.state === 'windup' && e.lock) {
+          const lx = hero.x - e.lock.x, ly = hero.y - e.lock.y, ld = Math.hypot(lx, ly);
+          if (ld < 26) {
+            // perpendicular to the lunge line (flyer -> lock), on the side we are already on
+            const fx = e.lock.x - e.x, fy = e.lock.y - e.y, fd = Math.hypot(fx, fy) || 1;
+            let px = -fy / fd, py = fx / fd;
+            if (lx * px + ly * py < 0) (px = -px), (py = -py);
+            vx += px * 1.5;
+            vy += py * 1.5;
+            reasons.push('bat');
+          }
+        }
+      }
+      if (hero.hpPct < caution) {
+        let kx = 0, ky = 0, near = 0, closest = Infinity;
+        for (const e of enemies) {
+          if (!e.alive) continue;
+          const dx = hero.x - e.x, dy = hero.y - e.y, d = Math.hypot(dx, dy) || 1;
+          if (d > 110) continue;
+          const w = (110 - d) / 110;
+          kx += (dx / d) * w;
+          ky += (dy / d) * w;
+          near++;
+          closest = Math.min(closest, d);
+        }
+        if (near) {
+          const kl = Math.hypot(kx, ky) || 1;
+          vx += (kx / kl) * 1.2;
+          vy += (ky / kl) * 1.2;
+          if (closest < 30 && !dash) (dash = true), (dashVec = [kx / kl, ky / kl]);
+          reasons.push('low hp');
+        }
+      }
+      const len = Math.hypot(vx, vy);
+      return { vec: len > 1e-6 ? [vx / len, vy / len] : null, dash, dashVec, reasons };
     },
 
     // Predictive evasion for arrows and fireballs.
@@ -780,6 +857,7 @@
     energyPrice: (v) => isFn(v) && v.length === 2,
     feedPerMeal: (v) => isFn(v) && v.length === 1,
     battleCap: (v) => isFn(v) && v.length === 1,
+    animalsPer: (v) => isFn(v) && v.length === 2,
   };
   const describe = (v) => {
     if (v === null) return 'null';
@@ -844,6 +922,7 @@
     energyPrice: G.energyPrice,
     feedPerMeal: G.feedPerMeal,
     battleCap: G.battleCap,
+    animalsPer: G.animalsPer,
   });
 
   // ---------------------------------------------------------------- PLANNER
@@ -1013,11 +1092,13 @@
         // Same sequence as the game's Harvest all / Plant all button: bulkStart (2 energy for the
         // batch), then every field as a normal job in one synchronous burst, which recordJob
         // counts once, exactly like the button.
-        const r = G.q.op('bulkStart', batch.kind);
-        if (!r.ok) {
-          log(`Bulk ${batch.kind} refused: ${r.msg}`, 'bad');
-          for (const j of batch.jobs) this.skip[j.key] = now + cfg.retryAfter * SEC;
-          return;
+        if (batch.kind === 'harvest' || batch.kind === 'plant') {
+          const r = G.q.op('bulkStart', batch.kind);
+          if (!r.ok) {
+            log(`Bulk ${batch.kind} refused: ${r.msg}`, 'bad');
+            for (const j of batch.jobs) this.skip[j.key] = now + cfg.retryAfter * SEC;
+            return;
+          }
         }
         let sent = 0;
         for (const j of batch.jobs) {
@@ -1030,8 +1111,10 @@
         }
         stats.jobs++;
         stats.bulk++;
-        this.status = `${batch.kind} all: ${sent} fields`;
-        log(`${batch.kind === 'harvest' ? 'Harvest' : 'Plant'} all: ${sent} field${sent === 1 ? '' : 's'} for 2 energy${batch.kind === 'plant' ? ' (' + [...new Set(batch.jobs.map((j) => j.job.crop))].join(', ') + ')' : ''}.`);
+        const what = batch.kind === 'feed' || batch.kind === 'collect' ? 'animals' : 'fields';
+        this.status = `${batch.kind} all: ${sent} ${what}`;
+        const buildings = batch.kind === 'feed' || batch.kind === 'collect' ? new Set(Core.occupiedBuildings(farm, helpers()).filter((g) => g.animals.some((a) => batch.jobs.some((j) => j.job.animalId === a.id))).map((g) => g.building.id)).size : 0;
+        log(batch.kind === 'feed' ? `Feed all: ${sent} animals in ${buildings} building${buildings === 1 ? '' : 's'} (2 energy per building per meal).` : batch.kind === 'collect' ? `Collect all: ${sent} animals in ${buildings} building${buildings === 1 ? '' : 's'} (2 energy per building per day).` : `${batch.kind === 'harvest' ? 'Harvest' : 'Plant'} all: ${sent} field${sent === 1 ? '' : 's'} for 2 energy${batch.kind === 'plant' ? ' (' + [...new Set(batch.jobs.map((j) => j.job.crop))].join(', ') + ')' : ''}.`);
         return;
       }
 
@@ -1081,6 +1164,8 @@
     dodges: 0,
     projEvades: 0,
     projDodges: 0,
+    threatEvades: 0,
+    threatDodges: 0,
 
     scene() {
       try {
@@ -1194,6 +1279,19 @@
           return [x / l, y / l];
         }
       }
+      // Bombers about to blow, bats mid-lunge, and a hero on low health.
+      const enemiesLite = s.enemies.map((e) => ({ x: e.x, y: e.y, state: e.state, brain: e.rule && e.rule.brain, radius: e.rule && e.rule.radius, alive: e.alive, lock: e.lock }));
+      const tv = Core.threatVector({ x: hero.x, y: hero.y, hpPct: hero.stats && hero.stats.maxHp ? hero.hp / hero.stats.maxHp : 1 }, enemiesLite, { cautionHp: cfg.battleCautionHp });
+      if (tv.vec) {
+        if (tv.dash && hero.dodgeCd <= 0 && hero.dodge(tv.dashVec[0], tv.dashVec[1])) this.threatDodges++;
+        this.threatEvades++;
+        const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
+        const lowHp = tv.reasons.includes('low hp');
+        const k = lowHp ? 0.7 : 0.85; // kiting still lets the auto-attack bite when they close in
+        const x = tv.vec[0] * k + base[0] * (1 - k), y = tv.vec[1] * k + base[1] * (1 - k);
+        const l = Math.hypot(x, y) || 1;
+        return [x / l, y / l];
+      }
       // A ranged enemy winding up aims at where the hero stands (archers lock the spot, wizards
       // track): drift sideways so the shot is already off-line when it leaves.
       const shooter = s.enemies.find((e) => e.alive && e.state === 'windup' && e.rule && (e.rule.brain === 'archer' || e.rule.brain === 'caster') && Math.hypot(e.x - hero.x, e.y - hero.y) < 260);
@@ -1294,6 +1392,8 @@
           this.dodges = 0;
           this.projEvades = 0;
           this.projDodges = 0;
+          this.threatEvades = 0;
+          this.threatDodges = 0;
           log(`Battle run started (energy ${farm.today.energy}).`);
           return this.setPhase('run');
         }
@@ -1320,8 +1420,11 @@
         if (s.mode === 'perk') {
           const btns = [...document.querySelectorAll('#battle-ui [data-perk]')];
           if (!btns.length) return;
-          const pri = cfg.perkPriority || [];
-          const pick = btns.find((b) => pri.includes(b.dataset.perk)) || btns[Math.floor(Math.random() * btns.length)];
+          const lowHp = s.hero && s.hero.stats && s.hero.hp / s.hero.stats.maxHp < cfg.battleCautionHp;
+          const pri = lowHp ? ['guard', 'dash', ...(cfg.perkPriority || [])] : cfg.perkPriority || [];
+          const offered = new Map(btns.map((b) => [b.dataset.perk, b]));
+          const chosen = pri.find((id) => offered.has(id));
+          const pick = chosen ? offered.get(chosen) : btns[Math.floor(Math.random() * btns.length)];
           if (age > 600) {
             pick.click();
             log(`Wave ${s.wave} cleared, perk: ${pick.dataset.perk}`);
@@ -1346,7 +1449,7 @@
           this.lastLoot = s.run.loot;
           this.unpatch();
           this.retreating = false;
-          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading)${s.run.died ? ', died' : ''}.`);
+          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes${s.run.died ? ', died' : ''}.`);
           return this.setPhase('summary');
         }
         if (s.mode === 'lobby') return this.setPhase('go');
@@ -1569,7 +1672,7 @@ ${row('Human check', `${G.Ca.status.mode}${G.Ca.blocked ? ' · <b class="bad">GA
 ${row('Pace', `${live.perMin}/${live.allowed} per min · variation ${ratio}`, live.perMin > live.allowed * cfg.budgetFraction || (isFinite(live.ratio) && live.ratio < cfg.minCv) ? 'bad' : '')}
 
 ${sec('farm', 'Farming options', `
-<div class="ctl">${cb('bulk', 'batch fields', 'Harvest all / Plant all: one bulkStart op, 2 energy for the whole batch, counted as one job by the game.')}
+<div class="ctl">${cb('bulk', 'batch jobs', 'Feed all, Collect all, Harvest all, Plant all in one burst each, as the game\'s own buttons do. Fields: 2 energy for the whole batch. Animals: the game charges 2 per building per meal whatever you do; the burst just counts as one job for pacing.')}
 <label class="tg" title="A ready field is left standing while other fields will ripen within this many minutes, so one Harvest all covers them for 2 energy. Feeding, collecting and fruit still happen meanwhile."><input type="checkbox" data-c="waitForBatch" ${cfg.waitForBatch ? 'checked' : ''}> wait up to <input type="number" min="1" max="60" step="1" value="${cfg.waitMinutes}" data-n="waitMinutes" style="width:46px"> min to harvest together</label>
 ${cb('capAware', 'cap-aware planting', 'Plant cash crops only while they fit under today\'s harvest cap; otherwise silo crops.')}
 ${cb('plantKeepsReserve', 'keep energy for meals', 'Planting waits while energy − 2 would drop under what today\'s remaining animal meals need. Off: plant whenever 2 energy is available; hungry animals are still fed first.')}
