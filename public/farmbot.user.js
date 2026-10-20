@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.4.0
+// @version      0.4.1
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -87,6 +87,7 @@
     perkPriority: ['guard', 'dash', 'blade', 'haste', 'reach', 'swift', 'crit', 'storm', 'thorns', 'magnet'],
     battleCautionHp: 0.35, // below this share of max HP the hero kites instead of pressing in
     mortarRadius: 30, // game hurts within 18 px of a marker; keep a margin
+    slamMargin: 14, // Minotaur slam hits within 58 px (a circle, though the drawn ring is flattened)
     projectileMargin: 16, // extra clearance beyond the game's 6/8 px hit radius
     projectileHorizon: 1.4, // seconds ahead to look for incoming shots
     projectileDashAt: 0.35, // dash (dodge) when impact is this close and sidestepping is late
@@ -732,6 +733,49 @@
       return { vec: [vx / len, vy / len], nearest };
     },
 
+    // Minotaur ground slam. The game: windup starts within 74 px, the slam lands at t = 0.9 s and
+    // hurts if the hero is within 58 px of the boss centre (a circle; the drawn ring is squashed
+    // to 58 × 35 for perspective). A dodge lasts 0.24 s and moves 64 px; attacking slows walking
+    // to 55 %. So: stop swinging, walk straight out while there is time; if walking cannot make it,
+    // dash when the dash itself carries the hero out, or at the last moment so its untouchable
+    // window covers the hit. Never walk back in until the slam has landed.
+    // hero: {x, y, speed, dodgeCd, bounds?{x0,y0,x1,y1}}; boss: {x, y, t, hitDone}
+    slamEscape(hero, boss, opts = {}) {
+      const hitAt = 0.9, radius = 58, dashDist = 64, dashTime = 0.24;
+      const safe = radius + (opts.margin ?? 14);
+      if (boss.hitDone || boss.t >= hitAt) return null;
+      const tLeft = hitAt - boss.t;
+      const b = hero.bounds;
+      const clampX = (x) => (b ? Math.max(b.x0, Math.min(b.x1, x)) : x);
+      const clampY = (y) => (b ? Math.max(b.y0, Math.min(b.y1, y)) : y);
+      // where the hero ends after moving `dist` px in direction v, clamped per axis like the game
+      const endDist = (v, dist) => {
+        let x = hero.x, y = hero.y;
+        for (let i = 0; i < 8; i++) { x = clampX(x + (v[0] * dist) / 8); y = clampY(y + (v[1] * dist) / 8); }
+        return Math.hypot(x - boss.x, y - boss.y);
+      };
+      const d = Math.hypot(hero.x - boss.x, hero.y - boss.y);
+      const away = d >= 1 ? [(hero.x - boss.x) / d, (hero.y - boss.y) / d] : null;
+      if (d >= safe) return { vec: d < safe + 8 && away ? away : [0, 0], dash: false, holdAttack: true, reason: 'outside the slam, holding' };
+      // a swing already under way finishes at 55 % walking speed (hero.swingLeft seconds)
+      const slow = Math.min(hero.swingLeft || 0, tLeft);
+      const walk = hero.speed * (slow * 0.55 + (tLeft - slow)) * 0.95;
+      const dashWalk = dashDist + hero.speed * Math.max(0, tLeft - dashTime) * 0.95;
+      // candidate directions: straight away first, then 24 around the compass
+      const dirs = [];
+      if (away) dirs.push(away);
+      for (let k = 0; k < 24; k++) dirs.push([Math.cos((k / 24) * Math.PI * 2), Math.sin((k / 24) * Math.PI * 2)]);
+      const best = (dist) => dirs.reduce((acc, v) => { const e = endDist(v, dist); return e > acc.e + 0.5 ? { v, e } : acc; }, { v: dirs[0], e: endDist(dirs[0], dist) });
+      const w = best(walk);
+      if (w.e >= safe) return { vec: w.v, dash: false, holdAttack: true, reason: 'walking out of the slam' };
+      if (hero.dodgeCd <= 0) {
+        const dw = best(dashWalk);
+        if (dw.e >= safe) return { vec: dw.v, dash: true, holdAttack: true, reason: 'dashing out of the slam' };
+        if (tLeft <= dashTime) return { vec: dw.v, dash: true, holdAttack: true, reason: 'dashing through the slam' };
+      }
+      return { vec: w.v, dash: false, holdAttack: true, reason: 'running, dash saved for the last moment' };
+    },
+
     // Immediate melee-type threats that the game's own routine handles poorly:
     //  - bomber in `fuse`: explodes 0.65 s after fusing, 38 px radius -> walk out, dash if close
     //  - flyer (bat) in `windup`: lunges at the spot it locked -> step off that spot sideways
@@ -1319,6 +1363,9 @@
     projDodges: 0,
     threatEvades: 0,
     threatDodges: 0,
+    slams: 0,
+    slamDodges: 0,
+    slamSeen: null,
 
     scene() {
       try {
@@ -1404,9 +1451,31 @@
       }
     },
 
-    // Movement: mortar escape > Rat King windup strafe > game's own botInput().
+    arenaBounds(s) {
+      try {
+        const cb = s.cameras.main.getBounds();
+        return { x0: 46, y0: 168, x1: cb.width - 46, y1: cb.height - 42 };
+      } catch {
+        return null;
+      }
+    },
+
+    // Movement: Minotaur slam > mortar escape > shots > bombs/bats/low HP > shooter strafe >
+    // Rat King windup strafe > game's own botInput().
     smartInput(s) {
       const hero = s.hero;
+      // Minotaur slam first: the game's routine dodges too early and then walks back in.
+      const slammer = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && e.state === 'windup' && !e.hitDone);
+      if (slammer) {
+        const swingLeft = hero.atkT >= 0 && hero.atkDur ? Math.max(0, hero.atkDur - hero.atkT) : 0;
+        const esc = Core.slamEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, swingLeft, bounds: this.arenaBounds(s) }, { x: slammer.x, y: slammer.y, t: slammer.t, hitDone: slammer.hitDone }, { margin: cfg.slamMargin });
+        if (esc) {
+          if (esc.holdAttack && typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05); // no new swings: full walking speed
+          if (esc.dash && hero.dodgeCd <= 0 && hero.dodge(esc.vec[0], esc.vec[1])) this.slamDodges++;
+          if (!this.slamSeen || this.slamSeen !== slammer) { this.slamSeen = slammer; this.slams++; }
+          return esc.vec;
+        }
+      }
       const mortars = [];
       for (const c of s.children.list) {
         if (c.active && c.texture && c.texture.key === 'b_mortar') mortars.push({ x: c.x, y: c.y + 6 }); // sprite sits 6 px above the impact point
@@ -1463,11 +1532,7 @@
         let sx = (-dy / d) * this.strafe, sy = (dx / d) * this.strafe;
         // flip the strafe direction near the arena edges so we do not pin ourselves
         // (arena = world minus 42 px left/right, 164 px top, 38 px bottom; camera bounds = world)
-        let b = null;
-        try {
-          const cb = s.cameras.main.getBounds();
-          b = { x0: 46, y0: 168, x1: cb.width - 46, y1: cb.height - 42 };
-        } catch {}
+        const b = this.arenaBounds(s);
         if (b && (hero.x + sx * 40 < b.x0 || hero.x + sx * 40 > b.x1 || hero.y + sy * 40 < b.y0 || hero.y + sy * 40 > b.y1)) {
           this.strafe = -this.strafe;
           sx = -sx;
@@ -1547,6 +1612,9 @@
           this.projDodges = 0;
           this.threatEvades = 0;
           this.threatDodges = 0;
+          this.slams = 0;
+          this.slamDodges = 0;
+          this.slamSeen = null;
           log(`Battle run started (energy ${farm.today.energy}).`);
           return this.setPhase('run');
         }
@@ -1602,7 +1670,7 @@
           this.lastLoot = s.run.loot;
           this.unpatch();
           this.retreating = false;
-          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes${s.run.died ? ', died' : ''}.`);
+          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes, ${this.slams} Minotaur slams escaped (${this.slamDodges} with a dash)${s.run.died ? ', died' : ''}.`);
           return this.setPhase('summary');
         }
         if (s.mode === 'lobby') return this.setPhase('go');
