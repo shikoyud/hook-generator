@@ -51,7 +51,7 @@
     waitForBatch: true, // hold a ready harvest while other fields ripen within waitMinutes, then harvest all together
     waitMinutes: 5,
     feedFirst: true, // grow wheat/corn for the silo until feed covers feedDaysAhead, then the plan's crop
-    feedDaysAhead: 1, // days of feed to keep in stock (bags + mixable grain)
+    feedExtraDays: 0, // on top of today's remaining meals, keep this many extra days of feed
     mixFeed: true, // mix grain into bags automatically (costs no energy)
     // energy purchases (see Core.energyPlan)
     autoEnergy: false, // master switch; the reasons below pick what energy may be bought for
@@ -192,11 +192,20 @@
       if (!h.feedPerMeal || !farm.animals.length) return null;
       const siloOk = !!(h.siloBuilt && h.siloBuilt(farm, now));
       const dailyNeed = farm.animals.reduce((n, a) => n + 2 * h.feedPerMeal(a.kind), 0);
+      // meals still to come today, per animal: the current window if not eaten yet, plus the
+      // afternoon window when it is still morning
+      const win = Core.mealWindow(now, farm.tz);
+      const morning = win.endsWith('S');
+      let remainingToday = 0;
+      for (const a of farm.animals) {
+        const left = (a.fedWindows.includes(win) ? 0 : 1) + (morning ? 1 : 0);
+        remainingToday += left * h.feedPerMeal(a.kind);
+      }
       const silo = farm.silo || {};
       const bags = silo.feed || 0, wheat = silo.wheat || 0, corn = silo.corn || 0;
       const pairs = Math.min(wheat, corn);
       const coverBags = bags + pairs * 10;
-      const target = dailyNeed * (cfg.feedDaysAhead ?? 1);
+      const target = remainingToday + dailyNeed * (cfg.feedExtraDays ?? 0);
       const mixes = Math.max(0, Math.ceil((target - coverBags) / 10));
       let wheatNeed = Math.max(0, mixes - (wheat - pairs));
       let cornNeed = Math.max(0, mixes - (corn - pairs));
@@ -213,7 +222,7 @@
         next = wheatNeed > cornNeed ? 'wheat' : cornNeed > wheatNeed ? 'corn' : wheat + growingW <= corn + growingC ? 'wheat' : 'corn';
       }
       return {
-        siloOk, dailyNeed, bags, wheat, corn, pairs, coverBags, target,
+        siloOk, dailyNeed, remainingToday, bags, wheat, corn, pairs, coverBags, target,
         daysCovered: dailyNeed ? coverBags / dailyNeed : Infinity,
         mixes, wheatNeed, cornNeed, growingW, growingC, capacityLeft, next,
         shouldMix: siloOk && pairs >= 1 && bags < target,
@@ -1776,19 +1785,19 @@ ${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk}
         ? '<p class="hint">feed function not in hook: regenerate the hook line</p>'
         : !fp
           ? '<p class="hint">No animals yet.</p>'
-          : `<div class="row"><span>Animals eat</span><span>${fp.dailyNeed} bags/day</span></div>
+          : `<div class="row"><span>Animals eat</span><span>${fp.dailyNeed} bags/day · ${fp.remainingToday} still to eat today</span></div>
 <div class="row"><span>Feed bags</span><span class="${fp.bags < fp.dailyNeed ? 'bad' : 'good'}">${fp.bags} (${fp.daysCovered === Infinity ? '∞' : fp.daysCovered.toFixed(1)} days with grain)</span></div>
 <div class="row"><span>Grain in silo</span><span>${fp.wheat} wheat · ${fp.corn} corn → ${fp.pairs * 10} bags mixable</span></div>
 <div class="row"><span>Growing now</span><span>${fp.growingW} wheat · ${fp.growingC} corn fields</span></div>
-<div class="row"><span>Still to grow for ${cfg.feedDaysAhead} day(s)</span><span class="${fp.wheatNeed + fp.cornNeed ? '' : 'good'}">${fp.wheatNeed} wheat · ${fp.cornNeed} corn</span></div>
+<div class="row"><span>Still to grow (target ${fp.target} bags)</span><span class="${fp.wheatNeed + fp.cornNeed ? '' : 'good'}">${fp.wheatNeed} wheat · ${fp.cornNeed} corn</span></div>
 <div class="row"><span>Next empty field</span><span>${!fp.siloOk ? 'no silo built' : fp.next ? `<b>${fp.next}</b> (feed first)` : "your plan's crop (feed covered)"}</span></div>`;
       b.innerHTML = `
 <h4>Feed for the animals</h4>
 <div class="ctl"><label class="tg"><input type="checkbox" data-c="feedFirst" ${cfg.feedFirst ? 'checked' : ''}> feed first</label>
-<label class="tg">keep <input type="number" min="0.5" max="7" step="0.5" value="${cfg.feedDaysAhead}" data-n="feedDaysAhead" style="width:52px"> day(s) of feed</label>
+<label class="tg">today's remaining meals + <input type="number" min="0" max="7" step="1" value="${cfg.feedExtraDays}" data-n="feedExtraDays" style="width:46px"> extra day(s)</label>
 <label class="tg"><input type="checkbox" data-c="mixFeed" ${cfg.mixFeed ? 'checked' : ''}> auto-mix bags</label></div>
 ${feedBox}
-<p class="hint">With "feed first" on, every empty field grows wheat or corn (whichever is shorter) until bags plus mixable grain cover the days above, counting fields already growing grain. After that the field gets the crop you chose below. Grain never counts against the harvest cap.</p>
+<p class="hint">With "feed first" on, every empty field grows wheat or corn (whichever is shorter) until bags plus mixable grain cover the meals your animals still have coming today (plus the extra days above), counting fields already growing grain. After that the field gets the crop you chose below. Grain never counts against the harvest cap.</p>
 <h4>Crop plan</h4>
 <div class="ctl"><span class="hint">Fill all:</span>
 <button class="btn sm" data-s="perHour">Best /h</button><button class="btn sm" data-s="perHarvest">Best /harvest</button>
@@ -1809,7 +1818,7 @@ ${farm.fields.length ? `<svg width="${Math.min(360, w)}" height="${h}" viewBox="
       b.querySelectorAll('[data-n]').forEach((i) => {
         i.onchange = () => {
           const v = Number(i.value);
-          if (Number.isFinite(v) && v > 0) {
+          if (Number.isFinite(v) && v >= 0) {
             cfg[i.dataset.n] = v;
             saveCfg();
             log(`${i.dataset.n}: ${v}`);
