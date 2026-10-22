@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.4.1
+// @version      0.5.0
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -87,7 +87,10 @@
     perkPriority: ['guard', 'dash', 'blade', 'haste', 'reach', 'swift', 'crit', 'storm', 'thorns', 'magnet'],
     battleCautionHp: 0.35, // below this share of max HP the hero kites instead of pressing in
     mortarRadius: 30, // game hurts within 18 px of a marker; keep a margin
-    slamMargin: 14, // Minotaur slam hits within 58 px (a circle, though the drawn ring is flattened)
+    slamMargin: 14, // extra px outside the Minotaur slam zone
+    slamShape: 'ellipse', // game AoqtnpSv+: the slam hits the drawn ring (58 × 34.8); older builds: 'circle' (58)
+    chargeMargin: 14, // extra px beside the Minotaur charge lane (it hits within 22 px of its path)
+    orchardAll: true, // pick a whole orchard as one job (2 energy) when the game supports it
     projectileMargin: 16, // extra clearance beyond the game's 6/8 px hit radius
     projectileHorizon: 1.4, // seconds ahead to look for incoming shots
     projectileDashAt: 0.35, // dash (dodge) when impact is this close and sidestepping is late
@@ -327,6 +330,13 @@
       return { buildings, meals, energy: meals * 2, windowsLeft: morning ? 2 : 1, text: `${buildings} building${buildings === 1 ? '' : 's'} × ${buildings ? (meals / buildings).toFixed(meals % buildings ? 1 : 0) : 0} meal(s) left × 2 = ${meals * 2}` };
     },
 
+    // Pantry update: eggs and milk marked "keep" go to the pantry (up to 200) when collected,
+    // paying no tokens and taking no harvest-cap room. Collecting still costs 2 energy.
+    goesToPantry(farm, kind, h) {
+      const item = h.keepItem && h.keepItem[kind];
+      return !!(item && farm.keep && farm.keep[item] && ((farm.pantry && farm.pantry[item]) || 0) < 200);
+    },
+
     siloCropChoice(farm) {
       const s = farm.silo || {};
       return (s.wheat || 0) <= (s.corn || 0) ? 'wheat' : 'corn';
@@ -359,7 +369,7 @@
           if (st.state === 'ready' || slot.lastHarvestAt + st.tree.hours * 3600e3 <= end) trees += h.kr(farm, st.tree);
         }
       }
-      for (const a of farm.animals) if (a.productReady) animals += h.dr(farm, a.kind);
+      for (const a of farm.animals) if (a.productReady && !Core.goesToPantry(farm, a.kind, h)) animals += h.dr(farm, a.kind);
       const total = earned + carry + ready + growing + trees + animals;
       return { cap, earned, carry, ready, growing, trees, animals, total, siloOk, room: Math.max(0, cap - total) };
     },
@@ -409,14 +419,15 @@
       }
 
       for (const s of farm.structures) {
-        if (!s.slots || !Core.isBuilt(s, now)) continue;
-        for (let i = 0; i < s.slots.length; i++) {
-          const key = `tree:${s.id}:${i}`;
-          if (!free(key)) continue;
-          if (h.Or(s.slots[i], now).state === 'ready') {
-            return { job: { type: 'tree-harvest', structureId: s.id, slot: i }, key, why: 'fruit ripe' };
-          }
+        if (!s.slots || !Core.isBuilt(s, now) || !free(`orchard:${s.id}`)) continue;
+        const ripe = s.slots.map((sl, i) => i).filter((i) => free(`tree:${s.id}:${i}`) && h.Or(s.slots[i], now).state === 'ready');
+        if (!ripe.length) continue;
+        // game build AoqtnpSv+: "Pick all" takes every ripe tree in the orchard for 2 energy
+        if (cfg.orchardAll !== false && ripe.length >= 2) {
+          return { job: { type: 'orchard-all', structureId: s.id, slot: ripe[0] }, key: `orchard:${s.id}`, why: `${ripe.length} trees ripe` };
         }
+        const i = ripe[0];
+        return { job: { type: 'tree-harvest', structureId: s.id, slot: i }, key: `tree:${s.id}:${i}`, why: 'fruit ripe' };
       }
 
       for (const s of farm.structures) {
@@ -600,7 +611,8 @@
       need += cfg.bulk && readyFields >= (cfg.bulkMin ?? 2) ? 2 : readyFields * 2;
       for (const s of farm.structures) {
         if (!s.slots) continue;
-        for (const slot of s.slots) if (slot.tree && h.Or(slot, now).state === 'ready') need += 2;
+        const ripe = s.slots.filter((slot) => slot.tree && h.Or(slot, now).state === 'ready').length;
+        need += cfg.orchardAll !== false && ripe >= 2 ? 2 : ripe * 2;
       }
       for (const s of farm.structures) {
         if (s.kind === 'oilwell' && Core.oilReady(s, now, farm.tz)) need += 2;
@@ -742,6 +754,10 @@
     // hero: {x, y, speed, dodgeCd, bounds?{x0,y0,x1,y1}}; boss: {x, y, t, hitDone}
     slamEscape(hero, boss, opts = {}) {
       const hitAt = 0.9, radius = 58, dashDist = 64, dashTime = 0.24;
+      // the slam zone: since game build AoqtnpSv it is the drawn ellipse 58 × 34.8 (y squashed);
+      // before that a 58 px circle. Distances are measured in that zone's units (58 = the edge).
+      const sy = opts.shape === 'circle' ? 1 : 58 / 34.8;
+      const zd = (dx, dy) => Math.hypot(dx, dy * sy);
       const safe = radius + (opts.margin ?? 14);
       if (boss.hitDone || boss.t >= hitAt) return null;
       const tLeft = hitAt - boss.t;
@@ -752,10 +768,12 @@
       const endDist = (v, dist) => {
         let x = hero.x, y = hero.y;
         for (let i = 0; i < 8; i++) { x = clampX(x + (v[0] * dist) / 8); y = clampY(y + (v[1] * dist) / 8); }
-        return Math.hypot(x - boss.x, y - boss.y);
+        return zd(x - boss.x, y - boss.y);
       };
-      const d = Math.hypot(hero.x - boss.x, hero.y - boss.y);
-      const away = d >= 1 ? [(hero.x - boss.x) / d, (hero.y - boss.y) / d] : null;
+      const d = zd(hero.x - boss.x, hero.y - boss.y);
+      // the fastest way out of an ellipse is the gradient of its metric, not the straight line
+      const gx = hero.x - boss.x, gy = (hero.y - boss.y) * sy * sy, gl = Math.hypot(gx, gy);
+      const away = d >= 1 && gl > 1e-6 ? [gx / gl, gy / gl] : null;
       if (d >= safe) return { vec: d < safe + 8 && away ? away : [0, 0], dash: false, holdAttack: true, reason: 'outside the slam, holding' };
       // a swing already under way finishes at 55 % walking speed (hero.swingLeft seconds)
       const slow = Math.min(hero.swingLeft || 0, tLeft);
@@ -774,6 +792,68 @@
         if (tLeft <= dashTime) return { vec: dw.v, dash: true, holdAttack: true, reason: 'dashing through the slam' };
       }
       return { vec: w.v, dash: false, holdAttack: true, reason: 'running, dash saved for the last moment' };
+    },
+
+    // Minotaur charge (game build AoqtnpSv+). When the hero is 90-220 px away: until t = 0.45 s the
+    // boss re-aims at the hero every frame; from 0.45 the direction is fixed and an aim line shows;
+    // at 0.7 it runs 250 px/s along that line until 1.15 s (about 112 px) and hits once if the
+    // hero is within 22 px of its centre. So: before the lock, back away (the run is short);
+    // after it, step sideways off the lane on the side with room; dash only if walking is too slow.
+    // hero: {x, y, speed, dodgeCd, bounds?}; boss: {x, y, t, hitDone, dir?{x,y}}
+    chargeEscape(hero, boss, opts = {}) {
+      const lockAt = 0.45, runAt = 0.7, runEnd = 1.15, runSpeed = 250, dashDist = 64, hitR = 22 + (opts.margin ?? 14);
+      if (boss.hitDone || boss.t >= runEnd) return null;
+      const b = hero.bounds;
+      const clampX = (x) => (b ? Math.max(b.x0, Math.min(b.x1, x)) : x);
+      const clampY = (y) => (b ? Math.max(b.y0, Math.min(b.y1, y)) : y);
+      // move `dist` px along v with per-axis wall clamping, like the game's moveBy
+      const move = (v, dist) => {
+        let x = hero.x, y = hero.y;
+        for (let i = 0; i < 8; i++) { x = clampX(x + (v[0] * dist) / 8); y = clampY(y + (v[1] * dist) / 8); }
+        return [x, y];
+      };
+      const dirs = [];
+      for (let k = 0; k < 24; k++) dirs.push([Math.cos((k / 24) * Math.PI * 2), Math.sin((k / 24) * Math.PI * 2)]);
+      const dx = hero.x - boss.x, dy = hero.y - boss.y, d = Math.hypot(dx, dy) || 1;
+      const reach = runSpeed * (runEnd - Math.max(runAt, boss.t)); // how far the boss can still run
+      if (boss.t < lockAt || !boss.dir) {
+        // not locked yet: the aim follows the hero, but the run is short. Gain distance (along a
+        // wall if need be); if already beyond the run's reach, stand still.
+        if (d > reach + hitR + 30) return { vec: [0, 0], dash: false, reason: 'charge aimed, out of reach' };
+        const walk = hero.speed * (lockAt - boss.t);
+        const bestV = dirs.concat([[dx / d, dy / d]]).reduce((acc, v) => {
+          const [x, y] = move(v, walk);
+          const e = Math.hypot(x - boss.x, y - boss.y);
+          return e > acc.e + 0.5 ? { v, e } : acc;
+        }, { v: [0, 0], e: d });
+        return { vec: bestV.v, dash: false, reason: 'backing off before the charge locks' };
+      }
+      const ux = boss.dir.x, uy = boss.dir.y;
+      // how safe a point is: distance from the lane, or fully safe when behind the boss / past the run
+      const clearance = (x, y) => {
+        const ax = x - boss.x, ay = y - boss.y;
+        const along = ax * ux + ay * uy, side = Math.abs(ax * -uy + ay * ux);
+        if (along < -hitR || along > reach + hitR) return hitR + 20;
+        return Math.min(side, hitR + 20); // beyond "comfortably clear", more distance is not better
+      };
+      if (clearance(hero.x, hero.y) >= hitR) return { vec: [0, 0], dash: false, reason: 'outside the charge lane' };
+      const along = dx * ux + dy * uy;
+      const tLeft = Math.max(runAt, boss.t) + Math.max(0, along) / runSpeed - boss.t; // until the boss reaches us
+      // try the two sideways steps first (own side, then the other), then the compass
+      const sg = Math.sign(dx * -uy + dy * ux) || 1;
+      const lane = [[-uy * sg, ux * sg], [uy * sg, -ux * sg]].concat(dirs);
+      const best = (dist) => lane.reduce((acc, v) => {
+        const [x, y] = move(v, dist);
+        const c = clearance(x, y);
+        return c > acc.c + 0.5 ? { v, c } : acc;
+      }, { v: dirs[0], c: -1 });
+      const w = best(hero.speed * tLeft * 0.95);
+      if (w.c >= hitR) return { vec: w.v, dash: false, reason: 'stepping off the charge lane' };
+      if (hero.dodgeCd <= 0) {
+        const dw = best(dashDist + hero.speed * Math.max(0, tLeft - 0.24) * 0.95);
+        if (dw.c >= hitR || tLeft <= 0.24) return { vec: dw.v, dash: true, reason: 'dashing off the charge lane' };
+      }
+      return { vec: w.v, dash: false, reason: 'stepping off the charge lane (dash saved)' };
     },
 
     // Immediate melee-type threats that the game's own routine handles poorly:
@@ -1005,6 +1085,7 @@
     fishScale: (v) => isFn(v) && typeof v() === 'number',
     fishBase: (v) => isFn(v) && v.length === 1,
     baitPrice: (v) => isFn(v) && v.length === 1,
+    keepItem: (v) => v && typeof v === 'object' && !Array.isArray(v),
   };
   const describe = (v) => {
     if (v === null) return 'null';
@@ -1013,7 +1094,7 @@
     if (Array.isArray(v)) return `array[${v.length}]`;
     return `object{${Object.keys(v).slice(0, 4).join(',')}}`;
   };
-  const OPTIONAL_HOOK = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice']);
+  const OPTIONAL_HOOK = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice', 'keepItem']);
   function validateHook(h) {
     const bad = [];
     for (const [k, test] of Object.entries(HOOK_CHECKS)) {
@@ -1076,6 +1157,7 @@
     fishScale: G.fishScale,
     fishBase: G.fishBase,
     baitPrice: G.baitPrice,
+    keepItem: G.keepItem,
   });
 
   // ---------------------------------------------------------------- PLANNER
@@ -1341,6 +1423,10 @@
         this.status = `refused ${pick.job.type}`;
         log(`Refused ${pick.job.type} on ${pick.key}; skipping for ${cfg.retryAfter}s`, 'bad');
         if (pick.job.type === 'plant' && pick.why === 'plan') Planner.refused(pick.job.fieldId, 'game refused this crop');
+        if (pick.job.type === 'orchard-all') {
+          cfg.orchardAll = false; // this game build has no "pick all" for orchards: pick tree by tree
+          log('This game build has no orchard Pick all; picking tree by tree.', 'bad');
+        }
       }
     },
   };
@@ -1366,6 +1452,10 @@
     slams: 0,
     slamDodges: 0,
     slamSeen: null,
+    charges: 0,
+    chargeDodges: 0,
+    chargeSeen: null,
+    chargeSeenT: 0,
 
     scene() {
       try {
@@ -1468,12 +1558,24 @@
       const slammer = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && e.state === 'windup' && !e.hitDone);
       if (slammer) {
         const swingLeft = hero.atkT >= 0 && hero.atkDur ? Math.max(0, hero.atkDur - hero.atkT) : 0;
-        const esc = Core.slamEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, swingLeft, bounds: this.arenaBounds(s) }, { x: slammer.x, y: slammer.y, t: slammer.t, hitDone: slammer.hitDone }, { margin: cfg.slamMargin });
+        const esc = Core.slamEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, swingLeft, bounds: this.arenaBounds(s) }, { x: slammer.x, y: slammer.y, t: slammer.t, hitDone: slammer.hitDone }, { margin: cfg.slamMargin, shape: cfg.slamShape });
         if (esc) {
           if (esc.holdAttack && typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05); // no new swings: full walking speed
           if (esc.dash && hero.dodgeCd <= 0 && hero.dodge(esc.vec[0], esc.vec[1])) this.slamDodges++;
           if (!this.slamSeen || this.slamSeen !== slammer) { this.slamSeen = slammer; this.slams++; }
           return esc.vec;
+        }
+      }
+      // Minotaur charge: the game's routine keeps walking at the boss, straight into the lane.
+      const charger = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && e.state === 'charge' && !e.hitDone);
+      if (charger) {
+        const ce = Core.chargeEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, bounds: this.arenaBounds(s) }, { x: charger.x, y: charger.y, t: charger.t, hitDone: charger.hitDone, dir: charger.t >= 0.45 ? charger.chargeDir : null }, { margin: cfg.chargeMargin });
+        if (ce) {
+          if (typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05);
+          if (ce.dash && hero.dodgeCd <= 0 && hero.dodge(ce.vec[0], ce.vec[1])) this.chargeDodges++;
+          if (this.chargeSeen !== charger || charger.t < this.chargeSeenT) { this.chargeSeen = charger; this.charges++; }
+          this.chargeSeenT = charger.t;
+          return ce.vec;
         }
       }
       const mortars = [];
@@ -1615,6 +1717,9 @@
           this.slams = 0;
           this.slamDodges = 0;
           this.slamSeen = null;
+          this.charges = 0;
+          this.chargeDodges = 0;
+          this.chargeSeen = null;
           log(`Battle run started (energy ${farm.today.energy}).`);
           return this.setPhase('run');
         }
@@ -1670,7 +1775,7 @@
           this.lastLoot = s.run.loot;
           this.unpatch();
           this.retreating = false;
-          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes, ${this.slams} Minotaur slams escaped (${this.slamDodges} with a dash)${s.run.died ? ', died' : ''}.`);
+          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes, ${this.slams} Minotaur slams escaped (${this.slamDodges} with a dash), ${this.charges} charges sidestepped (${this.chargeDodges} with a dash)${s.run.died ? ', died' : ''}.`);
           return this.setPhase('summary');
         }
         if (s.mode === 'lobby') return this.setPhase('go');

@@ -7,11 +7,11 @@ const esc = (s) => s.replace(/\$/g, '\\$');
 
 export const ORDER = [
   'q', 'U', 'Ca', 'Pg', 'jf', 'W', 'or', 'wr', 'Or', 'te', 'hr', 'de', 'je', 'Ae', 'Fe',
-  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap', 'animalsPer', 'fishTable', 'fishScale', 'fishBase', 'baitPrice',
+  'cap', 'dr', 'kr', 'passive', 'siloBuilt', 'siloCount', 'siloCap', 'energyPrice', 'feedPerMeal', 'battleCap', 'animalsPer', 'fishTable', 'fishScale', 'fishBase', 'baitPrice', 'keepItem',
 ];
 
 // Names added for newer game features. Older builds lack them; the bot then skips that feature.
-export const OPTIONAL = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice']);
+export const OPTIONAL = new Set(['fishTable', 'fishScale', 'fishBase', 'baitPrice', 'keepItem']);
 
 export const WHAT = {
   q: 'farm store (farm, visiting, op)',
@@ -44,6 +44,7 @@ export const WHAT = {
   fishScale: 'divisor for fish value',
   fishBase: 'fish value base for this farm',
   baitPrice: 'token price of one bait',
+  keepItem: 'animal kind to pantry item (eggs, milk)',
 };
 
 /**
@@ -102,7 +103,9 @@ function findNamesRaw(src) {
   names.Ae = find('Ae', new RegExp(`A \\$\\{(${ID})\\[r\\.kind\\]\\.name\\.toLowerCase\\(\\)\\}\\s*died after 24 hours`));
   names.Fe = find('Fe', new RegExp(`t\\.kind in (${ID})&&e\\.animals\\.some\\(`));
   names.cap = find('cap', new RegExp(`Math\\.min\\(n,(${ID})\\(e\\)-e\\.today\\.harvestEarned\\)`));
-  names.dr = find('dr', new RegExp(`let s=(${ID})\\(e,i\\.kind\\),c=${ID}\\(e,s\\);i\\.productReady=!1`));
+  names.dr = find('dr', new RegExp(`let ${ID}=(${ID})\\(e,i\\.kind\\),${ID}=${ID}\\(e,${ID}\\);(?:return )?i\\.productReady=!1`));
+// keepItem (optional): animal kind -> pantry item, `c=De()?Ke[i.kind]:void 0` (pantry update)
+names.keepItem = find('keepItem', new RegExp(`=${ID}\\(\\)\\?(${ID})\\[i\\.kind\\]:void 0;if\\(${ID}&&e\\.keep\\?\\.\\[`));
   names.kr = find('kr', new RegExp(`let s=(${ID})\\(e,o\\.tree\\),c=${ID}\\(e,s\\);return a\\.lastHarvestAt=r`));
   const claimFn = find('passive (claim op)', new RegExp(`claimPassive:\\(e,t\\)=>(${ID})\\(e,t\\)`));
   names.passive = claimFn ? find('passive', new RegExp(`function ${esc(claimFn)}\\(e,t\\)\\{let n=Math\\.floor\\((${ID})\\(e,t\\)\\)`)) : null;
