@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.6.1
+// @version      0.6.2
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -973,10 +973,15 @@
       // ---- 2. how good a spot is
       // crowding: stay outside each enemy's reach (melee r+21, contact r+6 ...), more at low HP
       const reachOf = (e) => (e.brain === 'melee' ? e.r + 21 : e.brain === 'ghost' ? e.r + 16 : e.brain === 'flyer' ? 30 : e.brain === 'bomber' ? 20 : e.isBoss ? e.r + 20 : e.r + 14);
+      // ghosts: faded while chasing (cannot be hit); they turn solid only when they strike, and stay
+      // solid through the strike and recovery (~1.9 s). So: let a faded ghost come in, step just
+      // outside its 23 px strike, then hit it while it is solid.
+      const fadedGhost = (e) => e.brain === 'ghost' && e.hittable === false && e.state === 'chase';
       const crowd = (x, y) => {
         let c = 0;
         for (const e of alive) {
           if (e.state === 'enter' && !e.isBoss) continue;
+          if (fadedGhost(e)) continue;
           const R = reachOf(e) + (low ? 18 : 10);
           const [ex, ey] = chase(e, x, y, H);
           const d = dist(x, y, ex, ey);
@@ -994,17 +999,20 @@
       // inside the hero's reach (~r+30) and just outside a melee enemy's (r+21)
       const hittable = alive.filter((e) => e.hittable !== false && e.state !== 'enter');
       let target = null, tBest = Infinity;
-      for (const e of hittable) {
+      for (const e of hittable.concat(alive.filter(fadedGhost))) {
         let s = dist(hero.x, hero.y, e.x, e.y);
         if (e.brain === 'archer' || e.brain === 'caster') s -= 60;
-        if (e.state === 'windup' || e.state === 'fuse') s += 80;
+        if (e.brain === 'ghost' && !fadedGhost(e)) s -= 70; // solid only for ~1.9 s: hit it now
+        else if (e.state === 'windup' || e.state === 'fuse') s += 80;
+        if (fadedGhost(e)) s += 25; // bait it only when nothing better is around
         if (e.isBoss) s += 40;
         // prefer enemies at the edge of the crowd
         s += 12 * alive.filter((o) => o !== e && dist(o.x, o.y, e.x, e.y) < 40).length;
         if (s < tBest) { tBest = s; target = e; }
       }
       const reach = hero.reach || 30;
-      const ideal = target ? target.r + reach * (target.brain === 'bomber' ? 0.95 : 0.8) : 0;
+      // faded ghost: stand where it will strike (r+14 triggers it); everything else: just inside reach
+      const ideal = !target ? 0 : fadedGhost(target) ? target.r + 9 : target.r + reach * (target.brain === 'bomber' ? 0.95 : 0.8);
       const offense = (x, y) => {
         if (!target) return 0;
         const d = dist(x, y, target.x, target.y);
@@ -1070,7 +1078,7 @@
         if (best.dz.escape > 0 && best.dz.soonest < 0.3) { out.storm = true; out.reason = 'storm to survive a hit'; }
         else if (inStorm >= 3) { out.storm = true; out.reason = `storm: ${inStorm} enemies around`; }
       }
-      if (!out.reason) out.reason = best.dz.hard > 0 ? 'least-bad move' : here.hard > 0 ? 'stepping out of an attack' : target ? `fighting ${target.id}` : 'idle';
+      if (!out.reason) out.reason = best.dz.hard > 0 ? 'least-bad move' : here.hard > 0 ? 'stepping out of an attack' : target ? (fadedGhost(target) ? 'baiting a faded ghost' : `fighting ${target.id}`) : 'idle';
       out.holdAttack = out.holdAttack || best.dz.escape > 0;
       return out;
     },
