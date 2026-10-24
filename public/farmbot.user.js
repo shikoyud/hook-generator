@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.6.4
+// @version      0.6.6
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -81,6 +81,8 @@
     claimEvery: 30, // minutes between collections
     // battle (separate mode, started with the Battle button)
     maxWave: 45, // retreat at this wave (editable in the Bot tab while running)
+    battleRoam: true, // walk around (and to loot) when no enemy is around instead of standing still
+    battleManual: false, // Bot tab "take over": you move, dash and storm; the bot still runs waves, perks and retreats
     keepAliveMin: 20,
     keepAliveMax: 45,
     // perk order: survive first (less damage, more dodges), then kill faster
@@ -1118,6 +1120,31 @@
       return out;
     },
 
+    // With no enemy to fight: walk to loot that is not being pulled in yet, otherwise wander between
+    // spots in the middle of the arena (enemies come in from the edges). Returns { vec, wp, reason };
+    // pass the returned wp back next frame. rnd = Math.random or a seeded one.
+    roam(hero, bounds, wp, rnd = Math.random, pickups = []) {
+      let best = null, bd = Infinity;
+      for (const p of pickups) {
+        if (p.pulled) continue;
+        const d = Math.hypot(p.x - hero.x, p.y - hero.y);
+        if (d < bd) { bd = d; best = p; }
+      }
+      if (best && bd > 4) return { vec: [(best.x - hero.x) / bd, (best.y - hero.y) / bd], wp, reason: 'picking up loot' };
+      const now = hero.clock || 0;
+      if (!wp || Math.hypot(wp.x - hero.x, wp.y - hero.y) < 12 || now - wp.at > 5) {
+        const b = bounds || { x0: hero.x - 100, x1: hero.x + 100, y0: hero.y - 60, y1: hero.y + 60 };
+        const w = b.x1 - b.x0, h = b.y1 - b.y0;
+        // a spot in the middle 60 %, at least 60 px away so the walk is visible
+        for (let k = 0; k < 8; k++) {
+          wp = { x: b.x0 + w * (0.2 + 0.6 * rnd()), y: b.y0 + h * (0.2 + 0.6 * rnd()), at: now };
+          if (Math.hypot(wp.x - hero.x, wp.y - hero.y) > 60) break;
+        }
+      }
+      const d = Math.hypot(wp.x - hero.x, wp.y - hero.y) || 1;
+      return { vec: [(wp.x - hero.x) / d, (wp.y - hero.y) / d], wp, reason: 'roaming' };
+    },
+
     // Immediate melee-type threats that the game's own routine handles poorly:
     //  - bomber in `fuse`: explodes 0.65 s after fusing, 38 px radius -> walk out, dash if close
     //  - flyer (bat) in `windup`: lunges at the spot it locked -> step off that spot sideways
@@ -1711,6 +1738,7 @@
     retreating: false,
     hiddenWarned: false,
     strafe: 1,
+    roamWp: null,
     lastLoot: null,
     dodges: 0,
     projEvades: 0,
@@ -1860,6 +1888,13 @@
         wave: s.wave,
       };
       const plan = Core.combatPlan(world, { cautionHp: cfg.battleCautionHp, bossThreats: true, slamMargin: cfg.slamMargin, chargeMargin: cfg.chargeMargin });
+      if (plan.reason === 'idle' && cfg.battleRoam) {
+        const pickups = (s.pickups || []).filter((p) => p.sprite && p.sprite.active).map((p) => ({ x: p.sprite.x, y: p.sprite.y + (p.z || 0), pulled: p.pulled }));
+        const r = Core.roam({ x: hero.x, y: hero.y, clock: now / 1000 }, world.bounds, this.roamWp, Math.random, pickups);
+        this.roamWp = r.wp;
+        plan.vec = r.vec;
+        plan.reason = r.reason;
+      }
       this.lastPlan = plan.reason;
       if (plan.holdAttack && typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05); // full walking speed
       if (plan.storm) {
@@ -1884,6 +1919,8 @@
       this.patched = { scene, moveInput: scene.moveInput };
       scene.moveInput = function () {
         if (this.mode !== 'play' && this.mode !== 'countdown') return [0, 0];
+        // "take over": the player's own keys, mouse or stick (dash and storm keys work as usual)
+        if (cfg.battleManual) return self.patched.moveInput.call(this);
         try {
           return self.smartInput(this);
         } catch (e) {
@@ -1967,7 +2004,7 @@
       if (this.phase === 'run') {
         if (s.mode === 'countdown' || s.mode === 'play') {
           this.patch(s);
-          this.keepAlive();
+          if (!cfg.battleManual) this.keepAlive();
           if (document.hidden && !this.hiddenWarned) {
             this.hiddenWarned = true;
             log('Tab hidden: the game pauses battle runs while hidden.', 'bad');
@@ -2228,7 +2265,7 @@
       b.innerHTML = `
 <div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
 ${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : (() => { const why = farm ? Battle.blockReason(farm) : null; return `<button class="btn battle" data-a="battle" ${why ? 'disabled title="' + this.esc(why) + '"' : ''}>Battle</button>${why ? `<span class="hint bad">${this.esc(why)}</span>` : ''}`; })()}</div>
-<div class="ctl"><label class="tg" title="A battle run retreats when it reaches this wave (or earlier when today's loot cap is full), then starts a new run while energy allows. Takes effect at once, also mid-run.">retreat at wave <input type="number" min="1" max="999" step="1" value="${cfg.maxWave}" data-n="maxWave" style="width:56px"></label>${Battle.engaged && Battle.scene() ? `<span class="hint">now on wave ${Battle.scene().wave || 0}</span>` : ''}</div>
+<div class="ctl"><label class="tg" title="A battle run retreats when it reaches this wave (or earlier when today's loot cap is full), then starts a new run while energy allows. Takes effect at once, also mid-run.">retreat at wave <input type="number" min="1" max="999" step="1" value="${cfg.maxWave}" data-n="maxWave" style="width:56px"></label> <label class="tg" title="Tick to control the hero yourself (keys, mouse or touch stick; Space/Shift dash, E/Q storm). The bot still picks perks, retreats at the wave above and starts new runs. Untick to hand control back to the bot."><input type="checkbox" data-c="battleManual" ${cfg.battleManual ? 'checked' : ''}> take over</label> <label class="tg" title="With no enemy around, walk to loot and around the middle of the arena instead of standing still."><input type="checkbox" data-c="battleRoam" ${cfg.battleRoam ? 'checked' : ''}> roam when clear</label>${Battle.engaged && Battle.scene() ? `<span class="hint">now on wave ${Battle.scene().wave || 0}</span>` : ''}</div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
 ${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : farm && G.battleCap ? `off · loot today ${Math.round(farm.today.battleEarned ?? 0)} / ${Math.round(G.battleCap(farm))}` : 'off', Battle.engaged ? 'good' : '')}
 ${row('Energy', farm ? `${farm.today.energy}${d && d.energy ? ` · meals still need ${d.energy}` : ''}` : '–')}
@@ -2298,6 +2335,10 @@ ${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk}
           cfg[i.dataset.c] = i.checked;
           saveCfg();
           log(`${i.dataset.c}: ${i.checked ? 'on' : 'off'}`);
+          if (i.dataset.c === 'battleManual') {
+            i.blur();
+            if (Battle.engaged) log(i.checked ? 'You have control: move with WASD/arrows or the mouse, Space dashes, E storms.' : 'The bot has control again.');
+          }
           this.render();
         };
       });
