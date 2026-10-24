@@ -105,7 +105,7 @@ function findNamesRaw(src) {
   names.cap = find('cap', new RegExp(`Math\\.min\\(n,(${ID})\\(e\\)-e\\.today\\.harvestEarned\\)`));
   names.dr = find('dr', new RegExp(`let ${ID}=(${ID})\\(e,i\\.kind\\),${ID}=${ID}\\(e,${ID}\\);(?:return )?i\\.productReady=!1`));
 // keepItem (optional): animal kind -> pantry item, `c=De()?Ke[i.kind]:void 0` (pantry update)
-names.keepItem = find('keepItem', new RegExp(`=${ID}\\(\\)\\?(${ID})\\[i\\.kind\\]:void 0;if\\(${ID}&&e\\.keep\\?\\.\\[`));
+names.keepItem = find('keepItem', new RegExp(`=${ID}\\(\\)\\?(${ID})\\[i\\.kind\\]:void 0(?:,[^;]{0,60})?;if\\(${ID}&&e\\.keep\\?\\.\\[`));
   names.kr = find('kr', new RegExp(`let s=(${ID})\\(e,o\\.tree\\),c=${ID}\\(e,s\\);return a\\.lastHarvestAt=r`));
   const claimFn = find('passive (claim op)', new RegExp(`claimPassive:\\(e,t\\)=>(${ID})\\(e,t\\)`));
   names.passive = claimFn ? find('passive', new RegExp(`function ${esc(claimFn)}\\(e,t\\)\\{let n=Math\\.floor\\((${ID})\\(e,t\\)\\)`)) : null;

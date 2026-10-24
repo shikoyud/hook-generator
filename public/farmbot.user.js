@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.5.0
+// @version      0.6.1
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -80,12 +80,12 @@
     claimMin: 1, // tokens accrued before collecting
     claimEvery: 30, // minutes between collections
     // battle (separate mode, started with the Battle button)
-    maxWave: 30,
+    maxWave: 45, // retreat at this wave (editable in the Bot tab while running)
     keepAliveMin: 20,
     keepAliveMax: 45,
     // perk order: survive first (less damage, more dodges), then kill faster
     perkPriority: ['guard', 'dash', 'blade', 'haste', 'reach', 'swift', 'crit', 'storm', 'thorns', 'magnet'],
-    battleCautionHp: 0.35, // below this share of max HP the hero kites instead of pressing in
+    battleCautionHp: 0.35, // below this share of max HP: wider berth around enemies, still fighting
     mortarRadius: 30, // game hurts within 18 px of a marker; keep a margin
     slamMargin: 14, // extra px outside the Minotaur slam zone
     slamShape: 'ellipse', // game AoqtnpSv+: the slam hits the drawn ring (58 × 34.8); older builds: 'circle' (58)
@@ -856,6 +856,225 @@
       return { vec: w.v, dash: false, reason: 'stepping off the charge lane (dash saved)' };
     },
 
+    // One movement decision per frame for everything except the Minotaur's slam and charge
+    // (those keep their own planners). It lists every attack about to land (zone + time left),
+    // scores where each possible move would leave the hero, and only dashes or storms when
+    // walking cannot avoid a hit, and only towards a landing spot that is itself safe.
+    // world: { hero, enemies, projs, mortars, bounds, wave }
+    //   hero: { x, y, hp, maxHp, speed, dodgeCd, swingLeft, reach, stormReady, stormRadius }
+    //   enemies: [{ id, brain, x, y, r, state, t, hitDone, lock, dmg, hittable, isBoss, nextMove, elite }]
+    //   projs: [{ x, y, vx, vy, kind }]   mortars: [{ x, y }]
+    // returns { vec, dash: [x,y]|null, storm, holdAttack, reason, danger }
+    combatPlan(world, opts = {}) {
+      const hero = world.hero, b = world.bounds;
+      const sp = hero.speed || 92;
+      const hpPct = hero.maxHp ? hero.hp / hero.maxHp : 1;
+      const low = hpPct < (opts.cautionHp ?? 0.35);
+      const m = opts.margin ?? 6; // px of safety on every hit zone
+      const H = 0.3; // seconds of walking a candidate move is judged over
+      const clampX = (x) => (b ? Math.max(b.x0, Math.min(b.x1, x)) : x);
+      const clampY = (y) => (b ? Math.max(b.y0, Math.min(b.y1, y)) : y);
+      const pathAt = (v, dist) => {
+        let x = hero.x, y = hero.y;
+        for (let i = 0; i < 6; i++) { x = clampX(x + (v[0] * dist) / 6); y = clampY(y + (v[1] * dist) / 6); }
+        return [x, y];
+      };
+      const swing = hero.swingLeft || 0;
+      const walkDist = (time) => sp * (Math.min(swing, time) * 0.55 + Math.max(0, time - swing));
+      const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+      const segDist = (px, py, ax, ay, bx, by) => {
+        const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2));
+        return Math.hypot(px - (ax + vx * t), py - (ay + vy * t));
+      };
+      const rayDist = (px, py, ax, ay, ux, uy) => { // distance to a ray from a along u (unit)
+        const t = Math.max(0, (px - ax) * ux + (py - ay) * uy);
+        return Math.hypot(px - (ax + ux * t), py - (ay + uy * t));
+      };
+      const alive = (world.enemies || []).filter((e) => e.state !== 'dying' && e.state !== 'gone');
+
+      // where a chasing enemy will be after `time` s if the hero ends at (x, y)
+      const chaseSpeed = (e) => (e.brain === 'hopper' ? (e.speed || 40) * 0.95 : e.brain === 'archer' || e.brain === 'caster' ? 0 : e.state === 'chase' || e.state === 'appear' ? e.speed || 40 : 0);
+      const chase = (e, x, y, time) => {
+        const s = chaseSpeed(e) * time;
+        if (!s) return [e.x, e.y];
+        const dx = x - e.x, dy = y - e.y, d = Math.hypot(dx, dy) || 1, k = Math.min(d, s) / d;
+        return [e.x + dx * k, e.y + dy * k];
+      };
+      // ---- 1. attacks that are about to land: { tau, dmg, zone(x, y) -> bool, hard }
+      const threats = [];
+      const heavy = (e) => e.id === 'skeleton';
+      for (const e of alive) {
+        const d0 = dist(hero.x, hero.y, e.x, e.y);
+        if (e.brain === 'melee') {
+          if (e.state === 'windup' && !e.hitDone) {
+            const tau = (heavy(e) ? 0.45 : 0.36) - e.t;
+            threats.push({ tau, dmg: e.dmg, hard: true, zone: (x, y) => dist(x, y, e.x, e.y) < e.r + 21 + m });
+          } else if (e.state === 'chase' && d0 < e.r + 40) {
+            // will wind up once within r+14 and hits r+21 0.36 s later
+            threats.push({ tau: 0.42, dmg: e.dmg * 0.5, hard: false, zone: (x, y) => dist(x, y, e.x, e.y) < e.r + 21 + m });
+          }
+        } else if (e.brain === 'ghost') {
+          if (e.state === 'windup' && !e.hitDone) threats.push({ tau: 0.36 - e.t, dmg: e.dmg, hard: true, zone: (x, y) => dist(x, y, e.x, e.y) < e.r + 16 + m });
+          else if (e.state === 'appear' && e.lock) threats.push({ tau: 0.6 - e.t + 0.36, dmg: e.dmg * 0.6, hard: false, zone: (x, y) => dist(x, y, e.lock.x, e.lock.y) < e.r + 24 + m });
+        } else if (e.brain === 'flyer') {
+          if (e.state === 'windup' && !e.hitDone && e.lock) threats.push({ tau: 0.34 - e.t, dmg: e.dmg, hard: true, zone: (x, y) => segDist(x, y, e.x, e.y, e.lock.x, e.lock.y) < e.r + 9 + m });
+        } else if (e.brain === 'bomber') {
+          if (e.state === 'fuse') threats.push({ tau: 0.65 - e.t, dmg: e.dmg, hard: true, zone: (x, y) => dist(x, y, e.x, e.y - 4) < 38 + m });
+          else if (d0 < 60) threats.push({ tau: 0.6, dmg: e.dmg * 0.4, hard: false, zone: (x, y) => dist(x, y, e.x, e.y) < 20 + 38 }); // fuses at r+13, blows 38 px
+        } else if (e.brain === 'archer' || e.brain === 'caster') {
+          if (e.state === 'windup' && !e.hitDone) {
+            const fire = e.brain === 'caster';
+            const late = !fire && (world.wave || 1) >= 10;
+            const shotAt = fire ? 0.66 : late ? 0.6 : 0.74;
+            const sx = e.x, sy = e.y - 8;
+            const tx = fire || !e.lock ? hero.x : e.lock.x, ty = fire || !e.lock ? hero.y - 4 : e.lock.y;
+            const l = Math.hypot(tx - sx, ty - sy) || 1, ux = (tx - sx) / l, uy = (ty - sy) / l;
+            const speed = fire ? 108 : 175;
+            const along = Math.max(0, (hero.x - sx) * ux + (hero.y - 6 - sy) * uy);
+            // a fireball is aimed at the hero when it leaves: only distance from the line it will
+            // take helps, so treat it like an arrow aimed at the current spot
+            threats.push({ tau: shotAt - e.t + along / speed, dmg: e.dmg, hard: true, zone: (x, y) => rayDist(x, y - 6, sx, sy, ux, uy) < (fire ? 8 : 6) + m + 4 });
+          }
+        } else if (e.brain === 'hopper' || e.brain === 'runner') {
+          // contact damage: they chase, so judge against where they will be (see `chaser` below)
+          threats.push({ tau: H, dmg: e.dmg, hard: true, contact: e, zone: (x, y) => { const [ex, ey] = chase(e, x, y, H); return dist(x, y, ex, ey) < e.r + 6 + m; } });
+        } else if (e.isBoss) {
+          threats.push({ tau: 0.15, dmg: e.dmg * 0.4, hard: false, zone: (x, y) => dist(x, y, e.x, e.y) < e.r + 4 + m });
+          if (opts.bossThreats && e.brain === 'boss' && e.state === 'windup' && !e.hitDone) {
+            // slam: lands at 0.9 s on the 58 × 34.8 ellipse
+            const k = ((58 + (opts.slamMargin ?? 14)) / 58) ** 2;
+            threats.push({ tau: 0.9 - e.t, dmg: e.dmg * 1.5, hard: true, zone: (x, y) => ((x - e.x) / 58) ** 2 + ((y - e.y) / 34.8) ** 2 < k });
+          }
+          if (opts.bossThreats && e.brain === 'boss' && e.state === 'charge' && !e.hitDone) {
+            // charge: aims until 0.45 s, runs 250 px/s from 0.7 to 1.15 s, hits within 22 px
+            const hitR = 22 + (opts.chargeMargin ?? 14), runLeft = 250 * (1.15 - Math.max(0.7, e.t));
+            if (e.t < 0.45 || !e.dir) threats.push({ tau: 0.7 - e.t, dmg: e.dmg * 1.5, hard: true, zone: (x, y) => dist(x, y, e.x, e.y) < runLeft + hitR });
+            else {
+              const ex = e.x + e.dir.x * runLeft, ey = e.y + e.dir.y * runLeft;
+              const along = Math.max(0, (hero.x - e.x) * e.dir.x + (hero.y - e.y) * e.dir.y);
+              threats.push({ tau: Math.max(0.7, e.t) - e.t + along / 250, dmg: e.dmg * 1.5, hard: true, zone: (x, y) => segDist(x, y, e.x, e.y, ex, ey) < hitR });
+            }
+          }
+        }
+      }
+      for (const p of world.projs || []) {
+        const sp2 = p.vx * p.vx + p.vy * p.vy;
+        if (sp2 < 1) continue;
+        const s = Math.sqrt(sp2), ux = p.vx / s, uy = p.vy / s;
+        const along = (hero.x - p.x) * ux + (hero.y - 6 - p.y) * uy;
+        if (along < -10 || along / s > 1.6) continue;
+        const rr = (p.kind === 'fireball' ? 8 : 6) + m + 4;
+        threats.push({ tau: Math.max(0, along) / s, dmg: 12, hard: true, zone: (x, y) => rayDist(x, y - 6, p.x, p.y, ux, uy) < rr });
+      }
+      // mortar markers: blast 18 px, 1.08 s after the marker appears (mo.tau = time left when known)
+      for (const mo of world.mortars || []) threats.push({ tau: mo.tau ?? 0.5, dmg: 18, hard: true, zone: (x, y) => dist(x, y, mo.x, mo.y) < 18 + m + 6 });
+
+      // ---- 2. how good a spot is
+      // crowding: stay outside each enemy's reach (melee r+21, contact r+6 ...), more at low HP
+      const reachOf = (e) => (e.brain === 'melee' ? e.r + 21 : e.brain === 'ghost' ? e.r + 16 : e.brain === 'flyer' ? 30 : e.brain === 'bomber' ? 20 : e.isBoss ? e.r + 20 : e.r + 14);
+      const crowd = (x, y) => {
+        let c = 0;
+        for (const e of alive) {
+          if (e.state === 'enter' && !e.isBoss) continue;
+          const R = reachOf(e) + (low ? 18 : 10);
+          const [ex, ey] = chase(e, x, y, H);
+          const d = dist(x, y, ex, ey);
+          if (d < R) c += ((R - d) / R) * (e.dmg / 10) * (e.elite ? 1.5 : 1);
+        }
+        return c;
+      };
+      const wall = (x, y) => {
+        if (!b) return 0;
+        const dx = Math.min(x - b.x0, b.x1 - x), dy = Math.min(y - b.y0, b.y1 - y);
+        const w = Math.max(0, (36 - dx) / 36) + Math.max(0, (36 - dy) / 36);
+        return w * w; // corners count double
+      };
+      // target: shooters first, then the nearest enemy that is not mid-attack; fight it from just
+      // inside the hero's reach (~r+30) and just outside a melee enemy's (r+21)
+      const hittable = alive.filter((e) => e.hittable !== false && e.state !== 'enter');
+      let target = null, tBest = Infinity;
+      for (const e of hittable) {
+        let s = dist(hero.x, hero.y, e.x, e.y);
+        if (e.brain === 'archer' || e.brain === 'caster') s -= 60;
+        if (e.state === 'windup' || e.state === 'fuse') s += 80;
+        if (e.isBoss) s += 40;
+        // prefer enemies at the edge of the crowd
+        s += 12 * alive.filter((o) => o !== e && dist(o.x, o.y, e.x, e.y) < 40).length;
+        if (s < tBest) { tBest = s; target = e; }
+      }
+      const reach = hero.reach || 30;
+      const ideal = target ? target.r + reach * (target.brain === 'bomber' ? 0.95 : 0.8) : 0;
+      const offense = (x, y) => {
+        if (!target) return 0;
+        const d = dist(x, y, target.x, target.y);
+        return Math.max(0, 1 - Math.abs(d - ideal) / 70);
+      };
+      const wCrowd = low ? 2.4 : 1.3, wWall = 1.2, wOff = low ? 0.8 : 1.2;
+      const ratVolley = alive.some((e) => e.brain === 'ratking' && e.state === 'windup' && e.nextMove === 'mortar');
+
+      // danger of a walking move: each threat is checked where the hero will be when it lands
+      const walkDanger = (v) => {
+        let hard = 0, soft = 0, soonest = Infinity, escape = 0;
+        for (const th of threats) {
+          const tau = Math.max(0, th.tau);
+          const [x, y] = v ? pathAt(v, walkDist(Math.min(tau, opts.bossThreats ? 1.0 : H + 0.15))) : [hero.x, hero.y];
+          if (th.zone(x, y)) {
+            if (th.hard && tau < 1.2) {
+              hard += th.dmg;
+              if (!th.contact) { escape += th.dmg; soonest = Math.min(soonest, tau); }
+            } else soft += th.dmg;
+          }
+        }
+        return { hard, soft, soonest, escape };
+      };
+      const score = (x, y, dz, still) =>
+        -dz.hard * 10 - dz.soft * 2.5 - crowd(x, y) * wCrowd * 4 - wall(x, y) * wWall * 3 + offense(x, y) * wOff * 3 - (still && ratVolley ? 4 : 0);
+
+      const dirs = [];
+      for (let k = 0; k < 16; k++) dirs.push([Math.cos((k / 16) * Math.PI * 2), Math.sin((k / 16) * Math.PI * 2)]);
+      const here = walkDanger(null);
+      let best = { v: [0, 0], s: score(hero.x, hero.y, here, true), dz: here };
+      for (const v of dirs) {
+        const dz = walkDanger(v);
+        const [x, y] = pathAt(v, walkDist(H));
+        const s = score(x, y, dz, false);
+        if (s > best.s + 0.01) best = { v, s, dz };
+      }
+      const out = { vec: best.v, dash: null, storm: false, holdAttack: here.escape > 0, reason: '', danger: best.dz.hard };
+
+      // ---- 3. dash only when walking still gets hit, and only to a clear landing spot
+      if (best.dz.escape > 0 && hero.dodgeCd <= 0) {
+        // prefer dashing away from the nearest enemy over dashing through it
+        let nx = 0, ny = 0, nd = Infinity;
+        for (const e of alive) { const d = dist(hero.x, hero.y, e.x, e.y); if (d < nd) { nd = d; nx = (hero.x - e.x) / (d || 1); ny = (hero.y - e.y) / (d || 1); } }
+        let bd = null;
+        for (const v of dirs) {
+          const [x, y] = pathAt(v, 64);
+          let hard = 0;
+          for (const th of threats) if (th.hard && !th.contact && th.tau > 0.24 && th.tau < 1.2 && th.zone(x, y)) hard += th.dmg;
+          // landing next to an enemy just trades one hit for the next
+          const s = -hard * 10 - crowd(x, y) * wCrowd * 7 - wall(x, y) * wWall * 4 + offense(x, y) * 0.5 + (v[0] * nx + v[1] * ny) * 0.8;
+          if (!bd || s > bd.s) bd = { v, s, hard };
+        }
+        if (bd && bd.hard < best.dz.escape && best.dz.soonest < 0.45) {
+          out.dash = bd.v;
+          out.vec = bd.v;
+          out.reason = 'dash to a clear spot';
+        }
+      }
+      // ---- 4. storm: untouchable for 0.75 s and hits everything around. Use it to survive a hit
+      // that neither walking nor a dash avoids, or when 3+ enemies are in its radius.
+      if (hero.stormReady && !out.dash) {
+        const inStorm = hittable.filter((e) => dist(hero.x, hero.y, e.x, e.y) - e.r <= (hero.stormRadius || 58) * 0.9).length;
+        if (best.dz.escape > 0 && best.dz.soonest < 0.3) { out.storm = true; out.reason = 'storm to survive a hit'; }
+        else if (inStorm >= 3) { out.storm = true; out.reason = `storm: ${inStorm} enemies around`; }
+      }
+      if (!out.reason) out.reason = best.dz.hard > 0 ? 'least-bad move' : here.hard > 0 ? 'stepping out of an attack' : target ? `fighting ${target.id}` : 'idle';
+      out.holdAttack = out.holdAttack || best.dz.escape > 0;
+      return out;
+    },
+
     // Immediate melee-type threats that the game's own routine handles poorly:
     //  - bomber in `fuse`: explodes 0.65 s after fusing, 38 px radius -> walk out, dash if close
     //  - flyer (bat) in `windup`: lunges at the spot it locked -> step off that spot sideways
@@ -1005,6 +1224,12 @@
   };
 
   const cfg = Object.assign({}, CONFIG, store.get('fsbot:cfg', {}));
+  // v0.6.1: the wave limit default moved from 30 to 45; move saved settings still on the old default
+  if (cfg.maxWaveDefault !== 45) {
+    if (cfg.maxWave === 30) cfg.maxWave = 45;
+    cfg.maxWaveDefault = 45;
+    store.set('fsbot:cfg', cfg);
+  }
   delete cfg.aggressive;
   const saveCfg = () => store.set('fsbot:cfg', cfg);
 
@@ -1456,6 +1681,12 @@
     chargeDodges: 0,
     chargeSeen: null,
     chargeSeenT: 0,
+    dashes: 0,
+    storms: 0,
+    bossMoveSeen: null,
+    bossMoveState: null,
+    lastPlan: '',
+    planErrorLogged: false,
 
     scene() {
       try {
@@ -1552,97 +1783,54 @@
 
     // Movement: Minotaur slam > mortar escape > shots > bombs/bats/low HP > shooter strafe >
     // Rat King windup strafe > game's own botInput().
+    mortarSeen: new WeakMap(),
+    // One decision per frame from Core.combatPlan (also used by tools/battle-sim.mjs). The game's
+    // own botInput() is no longer called: it dashed and stormed on its own as a side effect.
     smartInput(s) {
       const hero = s.hero;
-      // Minotaur slam first: the game's routine dodges too early and then walks back in.
-      const slammer = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && e.state === 'windup' && !e.hitDone);
-      if (slammer) {
-        const swingLeft = hero.atkT >= 0 && hero.atkDur ? Math.max(0, hero.atkDur - hero.atkT) : 0;
-        const esc = Core.slamEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, swingLeft, bounds: this.arenaBounds(s) }, { x: slammer.x, y: slammer.y, t: slammer.t, hitDone: slammer.hitDone }, { margin: cfg.slamMargin, shape: cfg.slamShape });
-        if (esc) {
-          if (esc.holdAttack && typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05); // no new swings: full walking speed
-          if (esc.dash && hero.dodgeCd <= 0 && hero.dodge(esc.vec[0], esc.vec[1])) this.slamDodges++;
-          if (!this.slamSeen || this.slamSeen !== slammer) { this.slamSeen = slammer; this.slams++; }
-          return esc.vec;
-        }
-      }
-      // Minotaur charge: the game's routine keeps walking at the boss, straight into the lane.
-      const charger = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && e.state === 'charge' && !e.hitDone);
-      if (charger) {
-        const ce = Core.chargeEscape({ x: hero.x, y: hero.y, speed: (hero.stats && hero.stats.speed) || 92, dodgeCd: hero.dodgeCd, bounds: this.arenaBounds(s) }, { x: charger.x, y: charger.y, t: charger.t, hitDone: charger.hitDone, dir: charger.t >= 0.45 ? charger.chargeDir : null }, { margin: cfg.chargeMargin });
-        if (ce) {
-          if (typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05);
-          if (ce.dash && hero.dodgeCd <= 0 && hero.dodge(ce.vec[0], ce.vec[1])) this.chargeDodges++;
-          if (this.chargeSeen !== charger || charger.t < this.chargeSeenT) { this.chargeSeen = charger; this.charges++; }
-          this.chargeSeenT = charger.t;
-          return ce.vec;
-        }
-      }
+      const now = s.time ? s.time.now : performance.now();
       const mortars = [];
       for (const c of s.children.list) {
-        if (c.active && c.texture && c.texture.key === 'b_mortar') mortars.push({ x: c.x, y: c.y + 6 }); // sprite sits 6 px above the impact point
+        if (!c.active || !c.texture || c.texture.key !== 'b_mortar') continue;
+        if (!this.mortarSeen.has(c)) this.mortarSeen.set(c, now);
+        // the sprite sits 6 px above the impact point; the blast lands 1.08 s after it appears
+        mortars.push({ x: c.x, y: c.y + 6, tau: 1.08 - (now - this.mortarSeen.get(c)) / 1000 });
       }
-      if (mortars.length) {
-        const esc = Core.mortarEscape(hero, mortars, cfg.mortarRadius);
-        if (esc.vec) {
-          if (esc.nearest < cfg.mortarRadius * 0.7 && hero.dodgeCd <= 0 && hero.dodge(esc.vec[0], esc.vec[1])) this.dodges++;
-          return esc.vec;
-        }
+      const st = hero.stats || {};
+      const world = {
+        hero: {
+          x: hero.x, y: hero.y, hp: hero.hp, maxHp: st.maxHp || 100, speed: st.speed || 92, dodgeCd: hero.dodgeCd,
+          swingLeft: hero.atkT >= 0 && hero.atkDur ? Math.max(0, hero.atkDur - hero.atkT) : 0, reach: st.reach || 30,
+          stormReady: !!hero.stormReady && !(hero.stormT >= 0), stormRadius: st.stormRadius || 58,
+        },
+        enemies: s.enemies.filter((e) => e.alive).map((e) => ({
+          id: e.rule.id, brain: e.rule.brain, speed: e.speed, x: e.x, y: e.y, r: e.rule.radius, state: e.state, t: e.t,
+          hitDone: e.hitDone, lock: e.lock, dmg: e.dmg, hittable: e.hittable, isBoss: e.isBoss, nextMove: e.nextMove, elite: e.elite,
+          dir: e.rule.brain === 'boss' && e.state === 'charge' && e.t >= 0.45 ? e.chargeDir : null,
+        })),
+        projs: (s.projs || []).filter((p) => p.sprite && p.sprite.active).map((p) => ({ x: p.sprite.x, y: p.sprite.y, vx: p.vx, vy: p.vy, kind: p.kind })),
+        mortars,
+        bounds: this.arenaBounds(s),
+        wave: s.wave,
+      };
+      const plan = Core.combatPlan(world, { cautionHp: cfg.battleCautionHp, bossThreats: true, slamMargin: cfg.slamMargin, chargeMargin: cfg.chargeMargin });
+      this.lastPlan = plan.reason;
+      if (plan.holdAttack && typeof hero.atkCd === 'number') hero.atkCd = Math.max(hero.atkCd, 0.05); // full walking speed
+      if (plan.storm) {
+        const was = hero.stormT >= 0;
+        if (typeof s.doStorm === 'function') s.doStorm();
+        else hero.storm();
+        if (!was && hero.stormT >= 0) this.storms++;
+      } else if (plan.dash && hero.dodgeCd <= 0 && hero.dodge(plan.dash[0], plan.dash[1])) this.dashes++;
+      // counters for the run summary
+      const boss = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && (e.state === 'windup' || e.state === 'charge'));
+      if (boss && (this.bossMoveSeen !== boss || boss.state !== this.bossMoveState)) {
+        if (boss.state === 'windup') this.slams++;
+        else this.charges++;
+        this.bossMoveSeen = boss;
       }
-      // Arrows and fireballs: sidestep early, dash only when it is about to land.
-      const projs = (s.projs || []).filter((p) => p.sprite && p.sprite.active).map((p) => ({ x: p.sprite.x, y: p.sprite.y, vx: p.vx, vy: p.vy, kind: p.kind }));
-      if (projs.length) {
-        const ev = Core.projectileEvasion({ x: hero.x, y: hero.y - 6 }, projs, { margin: cfg.projectileMargin, horizon: cfg.projectileHorizon, dashAt: cfg.projectileDashAt, preferSign: this.strafe });
-        if (ev.vec) {
-          if (ev.dash && hero.dodgeCd <= 0 && hero.dodge(ev.dashVec[0], ev.dashVec[1])) this.projDodges++;
-          this.projEvades++;
-          // keep a little of the normal behaviour so the hero still closes in afterwards
-          const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
-          const x = ev.vec[0] * 0.85 + base[0] * 0.15, y = ev.vec[1] * 0.85 + base[1] * 0.15;
-          const l = Math.hypot(x, y) || 1;
-          return [x / l, y / l];
-        }
-      }
-      // Bombers about to blow, bats mid-lunge, and a hero on low health.
-      const enemiesLite = s.enemies.map((e) => ({ x: e.x, y: e.y, state: e.state, brain: e.rule && e.rule.brain, radius: e.rule && e.rule.radius, alive: e.alive, lock: e.lock }));
-      const tv = Core.threatVector({ x: hero.x, y: hero.y, hpPct: hero.stats && hero.stats.maxHp ? hero.hp / hero.stats.maxHp : 1 }, enemiesLite, { cautionHp: cfg.battleCautionHp });
-      if (tv.vec) {
-        if (tv.dash && hero.dodgeCd <= 0 && hero.dodge(tv.dashVec[0], tv.dashVec[1])) this.threatDodges++;
-        this.threatEvades++;
-        const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
-        const lowHp = tv.reasons.includes('low hp');
-        const k = lowHp ? 0.7 : 0.85; // kiting still lets the auto-attack bite when they close in
-        const x = tv.vec[0] * k + base[0] * (1 - k), y = tv.vec[1] * k + base[1] * (1 - k);
-        const l = Math.hypot(x, y) || 1;
-        return [x / l, y / l];
-      }
-      // A ranged enemy winding up aims at where the hero stands (archers lock the spot, wizards
-      // track): drift sideways so the shot is already off-line when it leaves.
-      const shooter = s.enemies.find((e) => e.alive && e.state === 'windup' && e.rule && (e.rule.brain === 'archer' || e.rule.brain === 'caster') && Math.hypot(e.x - hero.x, e.y - hero.y) < 260);
-      if (shooter) {
-        const dx = hero.x - shooter.x, dy = hero.y - shooter.y, d = Math.hypot(dx, dy) || 1;
-        const sx = (-dy / d) * this.strafe, sy = (dx / d) * this.strafe;
-        const base = typeof s.botInput === 'function' ? s.botInput() : [0, 0];
-        const x = sx * 0.6 + base[0] * 0.4, y = sy * 0.6 + base[1] * 0.4;
-        const l = Math.hypot(x, y) || 1;
-        return [x / l, y / l];
-      }
-      const boss = s.enemies.find((e) => e.isBoss && e.alive);
-      if (boss && boss.state === 'windup' && boss.nextMove === 'mortar') {
-        // Mortars will target where the hero stands when the volley fires: keep moving sideways.
-        const dx = hero.x - boss.x, dy = hero.y - boss.y, d = Math.hypot(dx, dy) || 1;
-        let sx = (-dy / d) * this.strafe, sy = (dx / d) * this.strafe;
-        // flip the strafe direction near the arena edges so we do not pin ourselves
-        // (arena = world minus 42 px left/right, 164 px top, 38 px bottom; camera bounds = world)
-        const b = this.arenaBounds(s);
-        if (b && (hero.x + sx * 40 < b.x0 || hero.x + sx * 40 > b.x1 || hero.y + sy * 40 < b.y0 || hero.y + sy * 40 > b.y1)) {
-          this.strafe = -this.strafe;
-          sx = -sx;
-          sy = -sy;
-        }
-        return [sx * 0.9 + (dx / d) * 0.3, sy * 0.9 + (dy / d) * 0.3].map((v, _, arr) => v / (Math.hypot(arr[0], arr[1]) || 1));
-      }
-      return typeof s.botInput === 'function' ? s.botInput() : [0, 0];
+      this.bossMoveState = boss ? boss.state : null;
+      return plan.vec;
     },
     patch(scene) {
       if (this.patched) return;
@@ -1653,7 +1841,8 @@
         try {
           return self.smartInput(this);
         } catch (e) {
-          return typeof this.botInput === 'function' ? this.botInput() : [0, 0];
+          if (!self.planErrorLogged) { self.planErrorLogged = true; log(`battle planner error: ${e.message}`, 'bad'); }
+          return [0, 0];
         }
       };
     },
@@ -1720,6 +1909,8 @@
           this.charges = 0;
           this.chargeDodges = 0;
           this.chargeSeen = null;
+          this.dashes = 0;
+          this.storms = 0;
           log(`Battle run started (energy ${farm.today.energy}).`);
           return this.setPhase('run');
         }
@@ -1775,7 +1966,7 @@
           this.lastLoot = s.run.loot;
           this.unpatch();
           this.retreating = false;
-          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dodges} mortar dodges, ${this.projDodges} shot dodges (${this.projEvades} frames evading), ${this.threatDodges} bomb/bat/low-hp dashes, ${this.slams} Minotaur slams escaped (${this.slamDodges} with a dash), ${this.charges} charges sidestepped (${this.chargeDodges} with a dash)${s.run.died ? ', died' : ''}.`);
+          log(`Run over: wave ${s.wave}, ${s.run.kills} kills, loot ${Math.round(s.run.loot)}, ${this.dashes} dashes, ${this.storms} storms, ${this.slams} slams and ${this.charges} charges faced${s.run.died ? ', died' : ''}.`);
           return this.setPhase('summary');
         }
         if (s.mode === 'lobby') return this.setPhase('go');
@@ -1991,6 +2182,7 @@
       b.innerHTML = `
 <div class="ctl">${running ? '<button class="btn stop" data-a="stop">Stop farming</button>' : '<button class="btn" data-a="start">Start farming</button>'}
 ${Battle.engaged ? '<button class="btn stop" data-a="battleStop">Stop battle</button>' : (() => { const why = farm ? Battle.blockReason(farm) : null; return `<button class="btn battle" data-a="battle" ${why ? 'disabled title="' + this.esc(why) + '"' : ''}>Battle</button>${why ? `<span class="hint bad">${this.esc(why)}</span>` : ''}`; })()}</div>
+<div class="ctl"><label class="tg" title="A battle run retreats when it reaches this wave (or earlier when today's loot cap is full), then starts a new run while energy allows. Takes effect at once, also mid-run.">retreat at wave <input type="number" min="1" max="999" step="1" value="${cfg.maxWave}" data-n="maxWave" style="width:56px"></label>${Battle.engaged && Battle.scene() ? `<span class="hint">now on wave ${Battle.scene().wave || 0}</span>` : ''}</div>
 ${row('Farming', this.esc(running ? Farm.status : 'stopped'), running ? 'good' : '')}
 ${row('Battle', Battle.engaged ? `running · ${this.esc(Battle.phase)}` : farm && G.battleCap ? `off · loot today ${Math.round(farm.today.battleEarned ?? 0)} / ${Math.round(G.battleCap(farm))}` : 'off', Battle.engaged ? 'good' : '')}
 ${row('Energy', farm ? `${farm.today.energy}${d && d.energy ? ` · meals still need ${d.energy}` : ''}` : '–')}
@@ -2065,7 +2257,8 @@ ${sec('stats', 'Counters', row('Jobs sent / held', `${stats.jobs} (${stats.bulk}
       });
       b.querySelectorAll('[data-n]').forEach((i) => {
         i.onchange = () => {
-          const v = Number(i.value);
+          let v = Number(i.value);
+          if (i.dataset.n === 'maxWave') v = Math.round(v);
           if (Number.isFinite(v) && v > 0) {
             cfg[i.dataset.n] = v;
             saveCfg();
