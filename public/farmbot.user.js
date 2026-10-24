@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.6.2
+// @version      0.6.4
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -923,12 +923,16 @@
           if (e.state === 'fuse') threats.push({ tau: 0.65 - e.t, dmg: e.dmg, hard: true, zone: (x, y) => dist(x, y, e.x, e.y - 4) < 38 + m });
           else if (d0 < 60) threats.push({ tau: 0.6, dmg: e.dmg * 0.4, hard: false, zone: (x, y) => dist(x, y, e.x, e.y) < 20 + 38 }); // fuses at r+13, blows 38 px
         } else if (e.brain === 'archer' || e.brain === 'caster') {
-          if (e.state === 'windup' && !e.hitDone) {
-            const fire = e.brain === 'caster';
-            const late = !fire && (world.wave || 1) >= 10;
+          // an archer's aim follows the hero until 0.5 s (0.4 s from wave 10), and a fireball is aimed
+          // where the hero stands when it leaves: dodging before then only drags the line along
+          // (and stops the hero swinging). After that, the fixed line, then the projectile itself.
+          const lockedAt = (world.wave || 1) >= 10 ? 0.4 : 0.5;
+          if (e.state === 'windup' && !e.hitDone && e.brain === 'archer' && e.t >= lockedAt && e.lock) {
+            const fire = false;
+            const late = (world.wave || 1) >= 10;
             const shotAt = fire ? 0.66 : late ? 0.6 : 0.74;
             const sx = e.x, sy = e.y - 8;
-            const tx = fire || !e.lock ? hero.x : e.lock.x, ty = fire || !e.lock ? hero.y - 4 : e.lock.y;
+            const tx = e.lock.x, ty = e.lock.y;
             const l = Math.hypot(tx - sx, ty - sy) || 1, ux = (tx - sx) / l, uy = (ty - sy) / l;
             const speed = fire ? 108 : 175;
             const along = Math.max(0, (hero.x - sx) * ux + (hero.y - 6 - sy) * uy);
@@ -1019,6 +1023,10 @@
         return Math.max(0, 1 - Math.abs(d - ideal) / 70);
       };
       const wCrowd = low ? 2.4 : 1.3, wWall = 1.2, wOff = low ? 0.8 : 1.2;
+      // standing near a wall is only a cost beyond what fighting the target where it is requires
+      // (a target pinned in a corner is fought from the corner)
+      const wallAtTarget = target ? Math.min(1.5, wall(target.x, target.y)) : 0;
+      const wallCost = (x, y) => Math.max(0, wall(x, y) - wallAtTarget * 0.9);
       const ratVolley = alive.some((e) => e.brain === 'ratking' && e.state === 'windup' && e.nextMove === 'mortar');
 
       // danger of a walking move: each threat is checked where the hero will be when it lands
@@ -1037,7 +1045,7 @@
         return { hard, soft, soonest, escape };
       };
       const score = (x, y, dz, still) =>
-        -dz.hard * 10 - dz.soft * 2.5 - crowd(x, y) * wCrowd * 4 - wall(x, y) * wWall * 3 + offense(x, y) * wOff * 3 - (still && ratVolley ? 4 : 0);
+        -dz.hard * 10 - dz.soft * 2.5 - crowd(x, y) * wCrowd * 4 - wallCost(x, y) * wWall * 3 + offense(x, y) * wOff * 3 - (still && ratVolley ? 4 : 0);
 
       const dirs = [];
       for (let k = 0; k < 16; k++) dirs.push([Math.cos((k / 16) * Math.PI * 2), Math.sin((k / 16) * Math.PI * 2)]);
@@ -1077,6 +1085,33 @@
         const inStorm = hittable.filter((e) => dist(hero.x, hero.y, e.x, e.y) - e.r <= (hero.stormRadius || 58) * 0.9).length;
         if (best.dz.escape > 0 && best.dz.soonest < 0.3) { out.storm = true; out.reason = 'storm to survive a hit'; }
         else if (inStorm >= 3) { out.storm = true; out.reason = `storm: ${inStorm} enemies around`; }
+      }
+      // ---- 5. dash to close in: when nothing is about to hit, the target is well out of reach and
+      // the landing spot is clear (outside every enemy's reach, no attack zone, off the walls).
+      // At low HP only for the targets that cannot wait: shooters and a ghost that is solid for now.
+      if (opts.approachDash !== false && !out.dash && !out.storm && hero.dodgeCd <= 0 && target && !fadedGhost(target)
+        && here.hard === 0 && best.dz.hard === 0 && target.brain !== 'bomber' && !ratVolley) {
+        const urgent = target.brain === 'archer' || target.brain === 'caster' || target.brain === 'ghost';
+        const gap = dist(hero.x, hero.y, target.x, target.y) - ideal;
+        if (gap > 45 && (!low || urgent)) {
+          let ad = null;
+          for (const v of dirs) {
+            const [x, y] = pathAt(v, 64);
+            const dt = dist(x, y, target.x, target.y);
+            if (dt < ideal - 4) continue; // never overshoot into its reach
+            if (threats.some((th) => th.zone(x, y))) continue;
+            if (alive.some((e) => e !== target && e.state !== 'enter' && dist(x, y, e.x, e.y) < reachOf(e) + 24)) continue;
+            if (wallCost(x, y) > 0.3) continue;
+            const s = offense(x, y) * 3 - (dt - ideal) / 30 - crowd(x, y) * 4;
+            if (!ad || s > ad.s) ad = { v, s, dt };
+          }
+          // only if it actually gets much closer than walking would
+          if (ad && dist(hero.x, hero.y, target.x, target.y) - ad.dt > 40) {
+            out.dash = ad.v;
+            out.vec = ad.v;
+            out.reason = `dash in on ${target.id}`;
+          }
+        }
       }
       if (!out.reason) out.reason = best.dz.hard > 0 ? 'least-bad move' : here.hard > 0 ? 'stepping out of an attack' : target ? (fadedGhost(target) ? 'baiting a faded ghost' : `fighting ${target.id}`) : 'idle';
       out.holdAttack = out.holdAttack || best.dz.escape > 0;
@@ -1804,6 +1839,9 @@
         // the sprite sits 6 px above the impact point; the blast lands 1.08 s after it appears
         mortars.push({ x: c.x, y: c.y + 6, tau: 1.08 - (now - this.mortarSeen.get(c)) / 1000 });
       }
+      // the game keeps redrawing an archer's red aim line after the arrow is gone and never clears
+      // it once the archer goes back to walking; remove those leftovers (display only)
+      for (const e of s.enemies) if (e.aim && e.state !== 'windup' && typeof e.clearAim === 'function') e.clearAim();
       const st = hero.stats || {};
       const world = {
         hero: {
