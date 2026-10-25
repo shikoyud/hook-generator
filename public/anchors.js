@@ -89,7 +89,8 @@ function findNamesRaw(src) {
   names.Ca = humanClass ? find('Ca', new RegExp(`(${ID})=new ${esc(humanClass)}\\b`)) : null;
   names.q = find('q', new RegExp(`(${ID})=new class\\{farm=null`));
   names.U = find('U', new RegExp(`(${ID})=\\{place:\`farm\`,selectedField:null`));
-  names.Pg = find('Pg', new RegExp(`(${ID})=new ${ID}\\.default\\.Game\\(\\{`));
+  // `new V.default.Game({` up to build Cna0d58N, `new z.Game({` from LG9ka9IO
+  names.Pg = find('Pg', new RegExp(`(${ID})=new ${ID}(?:\\.default)?\\.Game\\(\\{`));
   names.jf = find('jf', new RegExp(`function (${ID})\\(e,t=!1\\)\\{if\\(!${ID}\\.visiting&&!${ID}\\.allow\\(\\)\\)return!1`));
   names.W = find('W', new RegExp(`(${ID})=new class\\{speed=`));
   names.or = find('or', new RegExp(`function (${ID})\\(e,t\\)\\{if\\(!e\\.crop\\)return\\{state:\`empty\`\\}`));
@@ -106,7 +107,8 @@ function findNamesRaw(src) {
   names.dr = find('dr', new RegExp(`let ${ID}=(${ID})\\(e,i\\.kind\\),${ID}=${ID}\\(e,${ID}\\);(?:return )?i\\.productReady=!1`));
 // keepItem (optional): animal kind -> pantry item, `c=De()?Ke[i.kind]:void 0` (pantry update)
 names.keepItem = find('keepItem', new RegExp(`=${ID}\\(\\)\\?(${ID})\\[i\\.kind\\]:void 0(?:,[^;]{0,60})?;if\\(${ID}&&e\\.keep\\?\\.\\[`));
-  names.kr = find('kr', new RegExp(`let s=(${ID})\\(e,o\\.tree\\),c=${ID}\\(e,s\\);return a\\.lastHarvestAt=r`));
+  // from LG9ka9IO the variables are `c` and `l` (fruit may go to the pantry first), so match any
+  names.kr = find('kr', new RegExp(`let (${ID})=(${ID})\\(e,o\\.tree\\),${ID}=${ID}\\(e,\\1\\);return a\\.lastHarvestAt=r`), 2);
   const claimFn = find('passive (claim op)', new RegExp(`claimPassive:\\(e,t\\)=>(${ID})\\(e,t\\)`));
   names.passive = claimFn ? find('passive', new RegExp(`function ${esc(claimFn)}\\(e,t\\)\\{let n=Math\\.floor\\((${ID})\\(e,t\\)\\)`)) : null;
   [, names.siloBuilt, names.siloCount, names.siloCap] = findAll(

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.6.6
+// @version      0.6.7
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -319,11 +319,23 @@
       return out;
     },
 
+    // Auto-feeder (game build LG9ka9IO): bought by the week; while it runs the game feeds every
+    // animal at every meal with no energy (feed from the silo first, then tokens). It catches up
+    // whenever the farm state advances, so hungry animals may still show for a moment: leave them.
+    feederOn(farm, now) {
+      const f = farm && farm.feeder;
+      return !!f && f.since <= now && now < f.until;
+    },
+
     // Same as mealReserve, with the pieces: buildings with animals, meals left today per
     // building (2 before noon, 1 after; minus the current meal if that building was fed).
+    // Meals the auto-feeder covers need no energy.
     mealReserveDetail(farm, now, h) {
       const win = Core.mealWindow(now, farm.tz);
       const morning = win.endsWith('S');
+      if (Core.feederOn(farm, now) && farm.feeder.until - now > 12 * 3600e3) {
+        return { buildings: 0, meals: 0, energy: 0, windowsLeft: morning ? 2 : 1, text: 'auto-feeder on: no energy kept for meals' };
+      }
       let buildings = 0, meals = 0;
       for (const { building: st } of Core.occupiedBuildings(farm, h)) {
         buildings++;
@@ -391,7 +403,7 @@
       const free = (key) => !queued.has(key) && !(skip[key] > now);
       const energy = farm.today.energy;
 
-      const hungry = farm.animals
+      const hungry = (Core.feederOn(farm, now) ? [] : farm.animals)
         .map((a) => ({ a, v: h.wr(a, now, win) }))
         .filter(({ a, v }) => v.hungry && free(`feed:${a.id}`))
         .sort((x, y) => x.v.msToStarve - y.v.msToStarve);
@@ -554,7 +566,7 @@
       // Animals: every hungry one in one burst (feed), every ready product in one burst (collect).
       // The game charges 2 per building per meal whatever the order; the burst saves pacing.
       const win = Core.mealWindow(now, farm.tz);
-      const hungry = farm.animals.filter((a) => h.wr(a, now, win).hungry && free(`feed:${a.id}`));
+      const hungry = Core.feederOn(farm, now) ? [] : farm.animals.filter((a) => h.wr(a, now, win).hungry && free(`feed:${a.id}`));
       if (hungry.length >= min && (energy >= 2 || hungry.some((a) => (a.meals ?? 1) === 0))) {
         const order = Core.occupiedBuildings(farm, h).flatMap((g) => g.animals).filter((a) => hungry.includes(a)).concat(hungry.filter((a) => !Core.occupiedBuildings(farm, h).some((g) => g.animals.includes(a))));
         return { kind: 'feed', jobs: order.map((a) => ({ job: { type: 'feed', animalId: a.id }, key: `feed:${a.id}`, why: 'hungry' })) };
@@ -603,7 +615,7 @@
       //    waiting, and planting the empty fields.
       const win = Core.mealWindow(now, farm.tz);
       let meals = 0;
-      if (cfg.energyForMeals !== false) {
+      if (cfg.energyForMeals !== false && !Core.feederOn(farm, now)) {
         for (const g of Core.occupiedBuildings(farm, h)) {
           if (g.building.fedWindow !== win && g.animals.some((a) => !a.fedWindows.includes(win))) meals += 2;
         }
