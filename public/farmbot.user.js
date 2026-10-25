@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Farming Season bot
 // @namespace    fs-bot
-// @version      0.6.7
+// @version      0.6.8
 // @description  Automation for Farming Season: farm loop, crop planner, cap-aware planting, village income, battle runs. Stays inside the game's human-check rules.
 // @match        https://farmingseason.io/*
 // @match        https://*.farmingseason.io/*
@@ -1914,7 +1914,14 @@
         if (typeof s.doStorm === 'function') s.doStorm();
         else hero.storm();
         if (!was && hero.stormT >= 0) this.storms++;
-      } else if (plan.dash && hero.dodgeCd <= 0 && hero.dodge(plan.dash[0], plan.dash[1])) this.dashes++;
+      } else if (plan.dash && hero.dodgeCd <= 0) {
+        // through the game's own dash path, as the Space key does: it also counts the dash in the
+        // run's `dodges`, which the run result reports (calling hero.dodge directly left it at 0)
+        const was = hero.dodgeT >= 0;
+        if (typeof s.doDodge === 'function') s.doDodge(plan.dash[0], plan.dash[1]);
+        else hero.dodge(plan.dash[0], plan.dash[1]);
+        if (!was && hero.dodgeT >= 0) this.dashes++;
+      }
       // counters for the run summary
       const boss = s.enemies.find((e) => e.alive && e.rule && e.rule.brain === 'boss' && (e.state === 'windup' || e.state === 'charge'));
       if (boss && (this.bossMoveSeen !== boss || boss.state !== this.bossMoveState)) {
